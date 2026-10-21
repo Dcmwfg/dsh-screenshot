@@ -52,8 +52,11 @@ window.__ModuleLoader__.load({
       hideDetail: '截到后台的其它窗口',
       keepLabel: '保持窗口可见',
       keepDetail: '把 DSH 自己也留在画面里',
-      webLabel: '开始框选屏幕',
-      webDetail: '浏览器会留在画面里；要截别的窗口，先把浏览器挪开或缩到一边',
+      webHideLabel: '最小化浏览器后截图',
+      webHideDetail: '截完自动恢复；浏览器要跑在这台机器上',
+      webKeepLabel: '保持浏览器可见',
+      webKeepDetail: '把浏览器一起框进画面',
+      hideMissed: '没找到浏览器窗口，没有最小化，画面里会带着浏览器',
       searchPlaceholder: '选择截图方式',
       empty: '没有可选方式',
       noResults: '没有匹配的方式',
@@ -71,8 +74,11 @@ window.__ModuleLoader__.load({
       hideDetail: 'Captures whatever is behind DSH',
       keepLabel: 'Keep this window visible',
       keepDetail: 'Leaves DSH itself in the picture',
-      webLabel: 'Frame part of the screen',
-      webDetail: 'The browser stays in the picture; move or shrink it first to reach other windows',
+      webHideLabel: 'Minimise the browser, then capture',
+      webHideDetail: 'Restores itself afterwards; the browser must run on this machine',
+      webKeepLabel: 'Keep the browser visible',
+      webKeepDetail: 'Leaves the browser in the picture',
+      hideMissed: 'No browser window found, so nothing was minimised; the browser is in the picture',
       searchPlaceholder: 'Pick a capture mode',
       empty: 'No capture modes',
       noResults: 'No matching mode',
@@ -202,7 +208,13 @@ window.__ModuleLoader__.load({
       const response = await fetch(ENDPOINT, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ title: document.title, hide: hideWindow !== false }),
+        body: JSON.stringify({
+          title: document.title,
+          hide: hideWindow !== false,
+          // The desktop shell can name its own window; a browser cannot, so the
+          // host falls back to "the foreground window, if it is a browser".
+          target: inDesktopShell() ? 'title' : 'browser',
+        }),
       })
       const payload = await response.json().catch(() => null)
       if (payload === null) return { ok: false, reason: 'failed', message: '' }
@@ -240,6 +252,7 @@ window.__ModuleLoader__.load({
           console.warn('[dsh-screenshot]', t('unsupported'))
           return
         }
+        if (hideWindow && result.payload.hidden === false) console.warn('[dsh-screenshot]', t('hideMissed'))
         const file = decodeFile(result.payload.dataUrl, 'screenshot-' + stamp() + '.png')
         dropIntoComposer(file)
         publish({ phase: 'idle', error: '' })
@@ -318,7 +331,10 @@ window.__ModuleLoader__.load({
                           { id: 'hide', label: t('hideLabel'), detail: t('hideDetail'), active: mode === 'hide' },
                           { id: 'keep', label: t('keepLabel'), detail: t('keepDetail'), active: mode === 'keep' },
                         ]
-                      : [{ id: 'keep', label: t('webLabel'), detail: t('webDetail'), active: true }],
+                      : [
+                          { id: 'hide', label: t('webHideLabel'), detail: t('webHideDetail'), active: mode === 'hide' },
+                          { id: 'keep', label: t('webKeepLabel'), detail: t('webKeepDetail'), active: mode === 'keep' },
+                        ],
                   // Must not await the capture: the shell closes the sheet only
                   // after this returns, and the shot has to happen with the
                   // sheet already gone.

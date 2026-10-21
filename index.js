@@ -205,6 +205,10 @@ export function apply(ctx) {
           const recordFile = join(tmpdir(), '$dsh-shot-' + tag + '.parked')
           const title = typeof body.title === 'string' ? body.title.slice(0, TITLE_LIMIT_CHARS) : ''
           const park = body.hide !== false
+          // 'title' = the desktop shell, whose page origin names one window.
+          // 'browser' = the browser build, where only a known browser process is
+          // ever touched and minimizing keeps a taskbar button to come back to.
+          const browserTarget = body.target === 'browser'
 
           try {
             const args = [
@@ -213,6 +217,8 @@ export function apply(ctx) {
               '-Record', recordFile,
               '-TimeoutSeconds', String(CAPTURE_BUDGET_SECONDS),
               '-HideWindow', park ? '1' : '0',
+              '-TargetKind', browserTarget ? 'browser' : 'title',
+              '-HideKind', browserTarget ? 'minimize' : 'hide',
               '-SourceDir', SCRIPTS,
             ]
             if (title !== '') args.push('-TitleFragment', title)
@@ -259,6 +265,7 @@ export function apply(ctx) {
               dataUrl: 'data:image/png;base64,' + bytes.toString('base64'),
               width: answer.width,
               height: answer.height,
+              hidden: answer.hidden === true,
               restored: true,
               bytes: bytes.length,
             })

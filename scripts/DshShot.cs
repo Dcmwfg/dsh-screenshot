@@ -36,14 +36,31 @@ public static class DshShot
     [DllImport("user32.dll")]
     private static extern bool IsWindowVisible(IntPtr hWnd);
     [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     private const int SW_HIDE = 0;
+    private const int SW_MINIMIZE = 6;
     private const int SW_RESTORE = 9;
     private const uint GA_ROOT = 2;
     private static readonly string[] ExcludedProcesses = { "powershell", "pwsh", "cmd", "conhost", "WindowsTerminal", "wezterm-gui" };
+
+    /// <summary>
+    /// Processes whose window may be stepped aside in the browser build. The
+    /// page there is served over http, so its own window cannot be named by the
+    /// app's origin; the one dependable fact is that the browser the user is
+    /// looking at owns the foreground at click time. This list is the guard: a
+    /// window outside it is never touched, whatever its caption says.
+    /// </summary>
+    private static readonly string[] BrowserProcesses =
+    {
+        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "chromium",
+        "arc", "thorium", "librewolf", "waterfox", "yandex", "iexplore",
+        "qqbrowser", "360se", "360chrome", "sogouexplorer", "ucbrowser"
+    };
 
     /// <summary>Outcome of one capture attempt; serialized by RunJson.</summary>
     public sealed class Outcome
@@ -54,12 +71,14 @@ public static class DshShot
         public string message = "";
         public int width;
         public int height;
+        /// <summary>True only when a window was actually stepped aside.</summary>
+        public bool hidden;
     }
 
     /// <summary>Run one capture and answer a single-line JSON document.</summary>
-    public static string RunJson(string outPath, int timeoutSeconds, string targetFile, string autoSelect, string titleFragment, bool hideWindow)
+    public static string RunJson(string outPath, int timeoutSeconds, string targetFile, string autoSelect, string titleFragment, bool hideWindow, string targetKind, string hideKind)
     {
-        Outcome outcome = Run(outPath, timeoutSeconds, targetFile, autoSelect, titleFragment, hideWindow);
+        Outcome outcome = Run(outPath, timeoutSeconds, targetFile, autoSelect, titleFragment, hideWindow, targetKind, hideKind);
         return "{"
             + "\"ok\":" + (outcome.ok ? "true" : "false")
             + ",\"path\":" + Quote(outcome.path)
@@ -67,10 +86,11 @@ public static class DshShot
             + ",\"message\":" + Quote(outcome.message)
             + ",\"width\":" + outcome.width
             + ",\"height\":" + outcome.height
+            + ",\"hidden\":" + (outcome.hidden ? "true" : "false")
             + "}";
     }
 
-    private static Outcome Run(string outPath, int timeoutSeconds, string targetFile, string autoSelect, string titleFragment, bool hideWindow)
+    private static Outcome Run(string outPath, int timeoutSeconds, string targetFile, string autoSelect, string titleFragment, bool hideWindow, string targetKind, string hideKind)
     {
         Outcome outcome = new Outcome();
         try { SetProcessDpiAwarenessContext(new IntPtr(-4)); }
@@ -80,18 +100,43 @@ public static class DshShot
         // its document title because the foreground window at spawn time can be a
         // console that the launcher briefly owned. Without hiding there is no
         // window to find at all: the frozen frame simply keeps what is on screen.
+        // Two ways to name the window that has to step aside:
+        //   title    - the page's own caption. The desktop shell serves the page
+        //              from dsh-app://app, so that caption names one window.
+        //   browser  - the browser build has no such guarantee, so only a window
+        //              whose process is a known browser may be touched: first a
+        //              caption match inside that allowlist, then the foreground
+        //              window if it is one. Anything else is left alone and the
+        //              capture proceeds with the screen as it stands - a picture
+        //              that happens to contain the browser beats moving a window
+        //              we could not identify.
+        bool browserOnly = string.Equals(targetKind, "browser", StringComparison.OrdinalIgnoreCase);
+        bool minimize = string.Equals(hideKind, "minimize", StringComparison.OrdinalIgnoreCase);
         IntPtr target = IntPtr.Zero;
         if (hideWindow)
         {
-            target = FindByTitle(titleFragment);
-            if (target == IntPtr.Zero) target = GetAncestor(GetForegroundWindow(), GA_ROOT);
-            if (target == IntPtr.Zero || !IsWindow(target))
+            if (browserOnly)
             {
-                outcome.reason = "failed";
-                outcome.message = "no window to hide";
-                return outcome;
+                // Caption first: it names THIS page, so a matching window is the
+                // one showing the client even when another browser is in front.
+                // The foreground is only a fallback for a missing or generic
+                // caption, and even then it must pass the browser allowlist.
+                target = FindBrowserByTitle(titleFragment);
+                if (target == IntPtr.Zero) target = FindForegroundBrowser();
+                if (target == IntPtr.Zero) outcome.message = "no browser window to step aside";
             }
-            if (targetFile != null && targetFile.Length > 0)
+            else
+            {
+                target = FindByTitle(titleFragment);
+                if (target == IntPtr.Zero) target = GetAncestor(GetForegroundWindow(), GA_ROOT);
+                if (target == IntPtr.Zero || !IsWindow(target))
+                {
+                    outcome.reason = "failed";
+                    outcome.message = "no window to hide";
+                    return outcome;
+                }
+            }
+            if (target != IntPtr.Zero && targetFile != null && targetFile.Length > 0)
             {
                 try { File.WriteAllText(targetFile, target.ToInt64().ToString()); } catch { }
             }
@@ -99,17 +144,21 @@ public static class DshShot
 
         try
         {
-            if (hideWindow)
+            if (hideWindow && target != IntPtr.Zero)
             {
-                ShowWindow(target, SW_HIDE);
+                ShowWindow(target, minimize ? SW_MINIMIZE : SW_HIDE);
                 // The compositor needs a beat before the window is really gone.
                 System.Threading.Thread.Sleep(180);
-                if (IsWindowVisible(target))
+                // A minimized window still counts as visible to Win32, so the
+                // proof of success differs per mode: hidden must report
+                // invisible, minimized must report iconic.
+                if (minimize ? !IsIconic(target) : IsWindowVisible(target))
                 {
                     outcome.reason = "failed";
-                    outcome.message = "could not hide the source window";
+                    outcome.message = minimize ? "could not minimize the source window" : "could not hide the source window";
                     return outcome;
                 }
+                outcome.hidden = true;
             }
             else
             {
@@ -244,6 +293,58 @@ public static class DshShot
         }, IntPtr.Zero);
 
         return found;
+    }
+
+    /// <summary>
+    /// The browser the user is looking at: the root of the foreground window,
+    /// accepted only when its process is on the browser list. The click that
+    /// starts a capture lands in that browser, so at this moment it owns the
+    /// foreground; anything else means the client is elsewhere and nothing is
+    /// moved.
+    /// </summary>
+    private static IntPtr FindForegroundBrowser()
+    {
+        IntPtr front = GetAncestor(GetForegroundWindow(), GA_ROOT);
+        if (front == IntPtr.Zero || !IsWindow(front)) return IntPtr.Zero;
+        return IsBrowserWindow(front) ? front : IntPtr.Zero;
+    }
+
+    /// <summary>Fallback for the browser build: a visible window on the browser list whose caption contains the page title.</summary>
+    private static IntPtr FindBrowserByTitle(string fragment)
+    {
+        if (fragment == null || fragment.Trim().Length < 4) return IntPtr.Zero;
+        string needle = fragment.Trim();
+        IntPtr found = IntPtr.Zero;
+
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+            if (!IsBrowserWindow(hWnd)) return true;
+            if (GetWindowTextLength(hWnd) == 0) return true;
+
+            System.Text.StringBuilder caption = new System.Text.StringBuilder(GetWindowTextLength(hWnd) + 2);
+            GetWindowText(hWnd, caption, caption.Capacity);
+            if (caption.ToString().IndexOf(needle, StringComparison.Ordinal) < 0) return true;
+
+            found = hWnd;
+            return false;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+
+    private static bool IsBrowserWindow(IntPtr hWnd)
+    {
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        string processName = "";
+        try { processName = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; }
+        catch { return false; }
+        foreach (string browser in BrowserProcesses)
+        {
+            if (string.Equals(processName, browser, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
     }
 
     private static Rectangle ParseRectangle(string spec)

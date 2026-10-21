@@ -15,9 +15,10 @@ English | [中文](README.zh-CN.md)
 
 | Action | Result |
 | --- | --- |
-| Composer `+` → **Screenshot** | Desktop build: two modes. Browser build: one (see below) |
-| **Hide this window, then capture** | DSH is parked first, so the shot shows what is behind it |
-| **Keep this window visible** | DSH stays on screen and can be part of the crop |
+| Composer `+` → **Screenshot** | Two modes, both builds (see below) |
+| **Hide this window, then capture** (desktop build) | DSH is hidden first, so the shot shows what is behind it |
+| **Minimise the browser, then capture** (browser build) | The browser drops to the taskbar and comes back afterwards |
+| **Keep this window visible** | The client stays on screen and can be part of the crop |
 | Drag on the frozen desktop | Selection rectangle, over the **whole** virtual screen at 1:1 |
 | Drag a white grip | Resize the selection (8 grips, min 6×6) |
 | Drag anywhere inside the frame (or the inner border strip) | Move the selection |
@@ -31,16 +32,28 @@ The chosen mode is remembered in `localStorage` under `dsh-screenshot.mode`.
 ## Desktop build vs browser build
 
 The selection step is identical on both: the same native form covers the whole virtual screen,
-with the same grips and annotations. Only "does DSH step aside" differs:
+with the same grips and annotations. Only "how does the client get out of the way" differs, and
+the reason is that the two builds can name their own window very differently:
 
-- **Desktop build** (the page runs on `dsh-app://app`): both modes are offered. Hiding finds
-  the DSH browser window by its title and puts it back afterwards.
-- **Browser build** (the web build opened over `http://`): a single "Frame part of the screen"
-  option, and the browser stays in the picture. **Hiding is not offered on purpose** — over
-  http there is no dependable "this is the DSH window" test, and a title match could park a
-  different window you are using. Move or shrink the browser first, then start the capture.
+- **Desktop build** (the page runs on `dsh-app://app`): the page origin names exactly one
+  window, so hiding may fall back to the title match and then the foreground window.
+- **Browser build** (the web build opened over `http://`): a page title proves nothing — a
+  dozen tabs can share one — so the host never touches a window on the strength of a caption
+  alone. It looks for a **known browser process** (`chrome`, `msedge`, `firefox`, `brave`,
+  `opera`, `vivaldi`, …) whose caption matches the page title, and only then falls back to
+  "the foreground window, if that window belongs to a browser". Anything else is left alone,
+  and the capture proceeds with the screen as it stands.
 
-The test is exactly `location.protocol === 'dsh-app:'` — nothing is guessed.
+That last point is a deliberate trade: a picture that happens to include the browser beats
+minimising a window we could not identify. When it happens the client logs one warning and the
+shot is still delivered.
+
+Minimising rather than hiding is also deliberate in the browser build: a minimised window
+keeps its taskbar button, so the restore is the ordinary `SW_RESTORE` and the window lands
+back where the user left it. Success is checked per mode — hidden must report
+`IsWindowVisible === false`, minimised must report `IsIconic === true`.
+
+The build test is exactly `location.protocol === 'dsh-app:'` — nothing is guessed.
 
 ## Using it from the browser build
 

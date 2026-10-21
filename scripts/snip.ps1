@@ -21,6 +21,13 @@ param(
   [string]$AutoSelect = '',
   [string]$TitleFragment = '',
   [int]$HideWindow = 1,
+  # Which window may be stepped aside: 'title' (desktop shell, named by the page
+  # caption) or 'browser' (browser build, foreground window but only when its
+  # process is a known browser).
+  [string]$TargetKind = 'title',
+  # How to step aside: 'hide' removes it from the taskbar, 'minimize' leaves the
+  # taskbar button so the restore is the ordinary one.
+  [string]$HideKind = 'hide',
   [string]$Record = '',
   [string]$SourceDir = '',
   [switch]$RestoreOnly
@@ -97,7 +104,7 @@ $parkedRecord = $Record
 if ([string]::IsNullOrEmpty($parkedRecord)) { $parkedRecord = $TargetFile }
 
 try {
-  $json = [DshShot]::RunJson($OutPath, $TimeoutSeconds, $parkedRecord, $AutoSelect, $TitleFragment, ($HideWindow -ne 0))
+  $json = [DshShot]::RunJson($OutPath, $TimeoutSeconds, $parkedRecord, $AutoSelect, $TitleFragment, ($HideWindow -ne 0), $TargetKind, $HideKind)
   Write-Line $json
 }
 catch {
