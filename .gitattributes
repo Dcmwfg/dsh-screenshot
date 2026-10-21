@@ -1,0 +1,10 @@
+# Keep PowerShell scripts and C# sources on the line endings Windows tooling
+# expects, so Add-Type and the PowerShell parser never see a mixed file.
+*.ps1  text eol=crlf
+*.cs   text eol=crlf
+*.md   text eol=lf
+*.js   text eol=lf
+*.json text eol=lf
+*.yml  text eol=lf
+*.svg  text eol=lf
+LICENSE text eol=lf
