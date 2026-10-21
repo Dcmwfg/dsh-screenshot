@@ -2,10 +2,10 @@
 
 **Region screenshot for the DeepSeek Harness composer.**
 
-One row in the composer's `+` menu. Click it, the DSH window steps aside, the screen
-freezes, you drag a rectangle over whatever you actually wanted to capture, annotate it,
-press the green tick — and the PNG lands in the composer as a **pending attachment**,
-ready to send with your next message.
+One row in the composer's `+` menu. Click it, pick a mode, the DSH window steps aside,
+the host takes a single snapshot of the desktop, you drag a rectangle over the part you
+actually wanted, annotate it, press the green tick — and the PNG lands in the composer as a
+**pending attachment**, ready to send with your next message.
 
 English | [中文](README.zh-CN.md)
 
@@ -16,41 +16,47 @@ English | [中文](README.zh-CN.md)
 | Action | Result |
 | --- | --- |
 | Composer `+` → **Screenshot** | Opens the two-mode picker |
-| **Hide this window, then capture** | DSH is hidden first, so the shot shows what is behind it |
+| **Hide this window, then capture** | DSH is parked first, so the shot shows what is behind it |
 | **Keep this window visible** | DSH stays on screen and you crop DSH itself |
 | Drag on the frozen screen | Selection rectangle |
 | Drag a white grip | Resize the selection (8 grips, min 6×6) |
 | Drag the inner border strip, or `Ctrl`+drag anywhere inside | Move the selection |
 | Drag inside the frame | Draw a rectangle annotation |
 | `Ctrl+Z` / ↶ button | Undo the last mark |
-| `Enter` / green ✓ | Accept, restore the window, drop the PNG in the composer |
-| `Esc` / red ✕ / right click | Cancel; the window still comes back |
+| `Enter` / green ✓ | Accept and drop the PNG in the composer |
+| `Esc` / red ✕ / right click | Cancel |
 
 The chosen mode is remembered in `localStorage` under `dsh-screenshot.mode`.
 
 ## Why hiding matters
 
 Most screenshot tools crop the screen the app is already covering, which is useless when
-the thing you want to show is *behind* the app. This one hides its own window for the
-duration of the shot and puts it back afterwards:
+the thing you want to show is *behind* the app. This one parks its own window for the
+length of one shutter, then puts it back:
 
 ```
-click  →  SW_HIDE the DSH window  →  wait for the compositor
-       →  freeze the whole virtual screen
-       →  overlay: drag / resize / annotate
-       →  composite the crop + marks into one PNG
-       →  SW_RESTORE + SetForegroundWindow   (in a finally block)
-       →  data URL  →  synthetic document drop  →  composer draft
+click  →  SW_MINIMIZE the DSH window  →  wait for the compositor
+       →  BitBlt the whole virtual screen into one bitmap
+       →  SW_RESTORE + SetForegroundWindow        (in a finally block)
+       →  browser overlay: drag / resize / annotate over the frozen frame
+       →  canvas crop + marks  →  one PNG  →  composer draft
 ```
 
-The restore lives in a `finally` block inside the native helper, so a cancelled or failed
-capture still brings the window back. If the helper process is killed outright, the window
-handle was written to a record file first and `scripts/restore.ps1` can unhide it.
+Two things follow from that shape, and both are deliberate:
+
+- **The window is only away for milliseconds.** Cropping happens afterwards, in the page,
+  over a frozen bitmap. Nobody has to keep DSH hidden while they fiddle with a rectangle.
+- **The native side has no UI.** It is a shutter and nothing else, so there is no second
+  selection widget to keep in sync with the browser one.
+
+The restore lives in a `finally` block, so a failed or timed-out capture still brings the
+window back. The handle is also written to a record file first, and
+`scripts\shutter.ps1 -RestoreOnly` can pull it back if the process was killed outright.
 
 ## Requirements
 
-- **Windows 10/11.** Window hiding, screen capture and the selection surface are all
-  Win32 / WinForms calls. There is no macOS or Linux path.
+- **Windows 10/11.** Hiding a window and copying the desktop are Win32 calls. There is no
+  macOS or Linux path.
 - A DSH desktop build whose composer exposes the `commandUi` service and the
   `webServer` + `connection` host services (the shipping desktop profile does).
 - Windows PowerShell 5.1, which ships with Windows. Nothing else to install — the C#
@@ -59,7 +65,7 @@ handle was written to a record file first and `scripts/restore.ps1` can unhide i
 ## Install
 
 The plugin is a plain DSH bundle: `package.json` + host half (`index.js`) + client half
-(`client.js`) + `cordis.patch.yml` + a native helper in `scripts/`.
+(`client.js`) + `cordis.patch.yml` + the native shutter in `scripts/`.
 
 1. Clone it somewhere outside the profile:
 
@@ -109,10 +115,9 @@ Nothing is sent until you submit — the screenshot is an attachment, not a mess
 
 | Half | File | Job |
 | --- | --- | --- |
-| Host | `index.js` | `POST /dsh-screenshot/snip` → spawns PowerShell with `scripts/snip.ps1`, answers one PNG data URL. `GET /dsh-screenshot/ping` is a liveness probe. |
-| Client | `client.js` | Registers the `shot` command with its two modes, waits for the picker sheet to close, then fires the capture and hands the PNG to the composer. |
-| Native | `scripts/snip.ps1` + `scripts/DshShot.cs` | Hide (optional) → freeze → selection window → composite → save PNG → restore. |
-| Safety net | `scripts/restore.ps1` | Unhides the window by its recorded handle if the helper died. |
+| Host | `index.js` | `POST /dsh-shot/shot` → spawns PowerShell with `scripts/shutter.ps1`, answers one PNG data URL plus the desktop origin. `GET /dsh-shot/ping` is a liveness probe. |
+| Client | `client.js` | Registers the `shot` command with its two modes, waits for the picker sheet to close, fires the capture, then renders the overlay that crops and annotates. |
+| Native | `scripts/shutter.ps1` + `scripts/Snap.cs` | Park the window (optional) → `BitBlt` the virtual screen → save PNG → restore. Also restores on demand with `-RestoreOnly`. |
 
 Both routes go through `ctx.connection.requestRejection(req)`, so they inherit the host's
 normal request policy instead of opening an unauthenticated hole.
@@ -121,10 +126,12 @@ normal request policy instead of opening an unauthenticated hole.
 
 | Route | Method | Body | Answer |
 | --- | --- | --- | --- |
-| `/dsh-screenshot/snip` | `POST` | `{"title": string, "hide": boolean}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"bytes":N}` or `{"ok":false,"reason":"cancelled"\|"failed","message":"…"}` |
-| `/dsh-screenshot/ping` | `GET` | — | `{"ok":true,"powershell":"…","scripts":"…"}` |
+| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"left":X,"top":Y,"restored":true,"bytes":N}` or `{"ok":false,"reason":"failed","message":"…"}` |
+| `/dsh-shot/ping` | `GET` | — | `{"ok":true,"driver":"…","shell":"…"}` |
 
-The body is capped at 8 KB and the helper at 180 s.
+The body is capped at 4 KB and the shutter at 180 s. `title` is matched against window
+captions to find the window to park; when nothing matches, the capture fails instead of
+guessing at whatever happens to be in front.
 
 ### Why a synthetic `drop` event
 
@@ -134,34 +141,44 @@ The composer accepts files through the document-level drop listener that
 preview path as a human drag-and-drop, without reaching into composer internals that move
 between releases.
 
+### Why the sheet is polled
+
+The host's `PopupSelectController` sets `submitting`, awaits `onSelect`, and only then
+closes the sheet. So `onSelect` here returns immediately and the capture is fired from a
+poll that waits for the sheet to leave the DOM — otherwise "keep this window visible" would
+freeze the picker panel into the frame. The poll gives up after 1.5 s and shoots anyway.
+
 ## Self-test
 
 ```powershell
 node --check index.js
 node --check client.js
 
-# Full native chain without touching the mouse: hide -> fixed region -> restore
+# One shutter, window left visible: prints one JSON line and writes a PNG
 powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
-  -File scripts\snip.ps1 -OutPath "$env:TEMP\shot.png" `
-  -AutoSelect '100,100,800,450' -TitleFragment 'DeepSeek Harness' -TimeoutSeconds 20
+  -File scripts\shutter.ps1 -OutPath "$env:TEMP\shot.png" -Hide 0
 
-# Same chain, window left visible
+# Park the window, shoot, and put it back
 powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
-  -File scripts\snip.ps1 -OutPath "$env:TEMP\shot2.png" `
-  -AutoSelect '0,0,640,360' -HideWindow 0 -TimeoutSeconds 20
+  -File scripts\shutter.ps1 -OutPath "$env:TEMP\shot2.png" -Hide 1 `
+  -TitleFragment 'DeepSeek Harness' -Record "$env:TEMP\shot2.parked"
+
+# Safety net, if a capture was killed mid-way
+powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
+  -File scripts\shutter.ps1 -RestoreOnly -Record "$env:TEMP\shot2.parked"
 ```
 
-Expected: one JSON line with `{"ok":true,…,"width":800,"height":450}`. After the first run
-the DSH window is visible again (`IsWindowVisible` true, `IsIconic` false); in the second
-run it never left.
+Expected: one JSON line containing `"ok":true` and the real desktop size (1920×1080 on a
+1080p display — not a DPI-scaled 1536×864; the shutter calls `SetProcessDPIAware` first).
+After the second command `"restored":true` means the window came back.
 
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
 | No `+` menu row | The bundle is not composed. Check the `bundles` array and the `node_modules` junction, then restart. |
-| `Screenshot failed` in the console | The helper printed an error. Run the self-test above — it uses the same script and prints the reason. |
-| Window stays hidden | The helper was killed mid-capture. Run `scripts\restore.ps1 -TargetFile <the .hwnd file referenced in the error>`, or click DSH on the taskbar. |
+| `Screenshot failed` in the console | The shutter printed an error. Run the self-test above — it uses the same script and prints the reason. |
+| Window stays hidden | The shutter was killed mid-capture. Run `scripts\shutter.ps1 -RestoreOnly -Record <the .parked file>`, or click DSH on the taskbar. |
 | Capture shows the picker panel | The mode picker had not finished closing. Reload the page; the client polls for the sheet (1.5 s cap) before firing. |
 | Nothing happens on a non-Windows host | Expected — the plugin is Windows-only. |
 
@@ -171,12 +188,9 @@ run it never left.
 - The whole virtual screen is frozen as one canvas, so multi-monitor regions work, but
   monitors with different DPI are flattened onto one coordinate grid.
 - Annotations are rectangles in one colour (red); `Ctrl+Z` undoes the last mark only.
-  The arrow drawing primitive exists in `DshShot.cs` but no toolbar button selects it yet.
 - The frozen frame is a snapshot: anything that changes behind the overlay is not reflected.
 - "Keep this window visible" captures whatever is on screen, so bring DSH to the front
   first if you want to crop DSH itself.
-- The toolbar's three glyphs are painted paths, not font glyphs — that is why the undo tick
-  and cross share a stroke weight and optical centre.
 
 ## License
 
