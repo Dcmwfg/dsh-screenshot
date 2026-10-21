@@ -178,6 +178,19 @@ run it never left.
 - The toolbar's three glyphs are painted paths, not font glyphs — that is why the undo tick
   and cross share a stroke weight and optical centre.
 
+## Credits
+
+This plugin is a derivative work. The native capture chain — `scripts/snip.ps1`,
+`scripts/restore.ps1` and the skeleton of `scripts/DshShot.cs` — plus most of the host half
+(`index.js`) come from [arun13144234/dsh-screenshot](https://github.com/arun13144234/dsh-screenshot),
+which is MIT licensed and was the reference implementation for this design. What this fork adds:
+the entry point moved into the composer's `+` command menu, the selection veil and annotation
+stage moved from native code into a React overlay, the image is handed to the composer through
+`conversation.createDrafts` instead of a synthetic `drop` event, and the selection box can be
+moved and resized after it is drawn.
+
+Upstream copyright is preserved in [LICENSE](LICENSE).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
