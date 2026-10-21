@@ -117,12 +117,17 @@ public static class DshShot
         {
             if (browserOnly)
             {
-                // Caption first: it names THIS page, so a matching window is the
-                // one showing the client even when another browser is in front.
-                // The foreground is only a fallback for a missing or generic
-                // caption, and even then it must pass the browser allowlist.
-                target = FindBrowserByTitle(titleFragment);
-                if (target == IntPtr.Zero) target = FindForegroundBrowser();
+                // Best case: the window the user is actually looking at is a
+                // browser AND its caption is this page. That is exactly "the
+                // window showing the client", so it wins outright and a second
+                // browser window can never be picked by accident.
+                IntPtr front = FindForegroundBrowser();
+                if (front != IntPtr.Zero && CaptionMatches(front, titleFragment)) target = front;
+                // Otherwise fall back to a caption match anywhere on the browser
+                // list, then to any foreground browser at all (a generic caption
+                // still identifies the browser the user clicked in).
+                if (target == IntPtr.Zero) target = FindBrowserByTitle(titleFragment);
+                if (target == IntPtr.Zero) target = front;
                 if (target == IntPtr.Zero) outcome.message = "no browser window to step aside";
             }
             else
@@ -309,6 +314,26 @@ public static class DshShot
         return IsBrowserWindow(front) ? front : IntPtr.Zero;
     }
 
+    /// <summary>Window caption, or "" when the window has none.</summary>
+    private static string CaptionOf(IntPtr hWnd)
+    {
+        int length = GetWindowTextLength(hWnd);
+        if (length == 0) return "";
+        System.Text.StringBuilder caption = new System.Text.StringBuilder(length + 2);
+        GetWindowText(hWnd, caption, caption.Capacity);
+        return caption.ToString();
+    }
+
+    /// <summary>
+    /// True when this window's caption names the page. A caption of four
+    /// characters or less is too generic to prove anything, so it never matches.
+    /// </summary>
+    private static bool CaptionMatches(IntPtr hWnd, string fragment)
+    {
+        if (fragment == null || fragment.Trim().Length < 4) return false;
+        return CaptionOf(hWnd).IndexOf(fragment.Trim(), StringComparison.Ordinal) >= 0;
+    }
+
     /// <summary>Fallback for the browser build: a visible window on the browser list whose caption contains the page title.</summary>
     private static IntPtr FindBrowserByTitle(string fragment)
     {
@@ -320,11 +345,7 @@ public static class DshShot
         {
             if (!IsWindowVisible(hWnd)) return true;
             if (!IsBrowserWindow(hWnd)) return true;
-            if (GetWindowTextLength(hWnd) == 0) return true;
-
-            System.Text.StringBuilder caption = new System.Text.StringBuilder(GetWindowTextLength(hWnd) + 2);
-            GetWindowText(hWnd, caption, caption.Capacity);
-            if (caption.ToString().IndexOf(needle, StringComparison.Ordinal) < 0) return true;
+            if (CaptionOf(hWnd).IndexOf(needle, StringComparison.Ordinal) < 0) return true;
 
             found = hWnd;
             return false;
