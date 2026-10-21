@@ -163,17 +163,6 @@ powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
 - 「保持窗口可见」截的就是当前屏幕，想框 DSH 自己得先把 DSH 切到前台。
 - 工具栏三个图标是代码画的路径，不走字体——所以撤销、勾、叉的笔画粗细和重心是一致的。
 
-## 致谢与来源
-
-本插件是衍生作品。原生截图链（`scripts/snip.ps1`、`scripts/restore.ps1` 和
-`scripts/DshShot.cs` 的骨架）以及宿主半（`index.js`）的大部分来自
-[arun13144234/dsh-screenshot](https://github.com/arun13144234/dsh-screenshot)，那个项目是 MIT
-许可，也是本设计的参考实现。这一版改的是：入口从输入框左侧按钮挪进 `+` 命令菜单；
-选区遮罩和标注从原生代码搬进 React 覆盖层；图片改用 `conversation.createDrafts` 交付，
-不再伪造 `drop` 事件；选区画完之后还能继续平移和缩放。
-
-上游版权声明已保留在 [LICENSE](LICENSE) 里。
-
 ## 许可
 
 MIT，见 [LICENSE](LICENSE)。
