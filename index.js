@@ -1,11 +1,15 @@
 /**
  * Host half of the screenshot bundle.
  *
- * The browser does the cropping, so this half is a shutter and nothing else:
- * one route, which asks the native driver to optionally park the calling window,
- * copy the desktop into a PNG, and put the window back. The client receives the
- * image together with the desktop origin and size it was taken from, so it can
- * convert its own pointer coordinates into image pixels without guessing.
+ * One route: ask the native driver to park this window, draw a full-screen
+ * selection form over the whole virtual desktop, let the user frame and annotate
+ * a region, crop it to PNG, and put the window back. The client only forwards
+ * the finished image to the composer.
+ *
+ * The selection deliberately lives in a native top-level form rather than in the
+ * page: a DOM overlay can never leave the renderer's viewport, so it can only
+ * offer a scaled-down picker inside the app window. A WinForms form sized to
+ * SystemInformation.VirtualScreen covers every monitor 1:1.
  *
  * Everything here runs in the DSH host process, never in the tool sandbox:
  * cross-process window control is refused inside that sandbox.
@@ -20,7 +24,7 @@ export const inject = ['webServer', 'connection']
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const SCRIPTS = join(ROOT, 'scripts')
-const DRIVER = join(SCRIPTS, 'shutter.ps1')
+const DRIVER = join(SCRIPTS, 'snip.ps1')
 
 const SHOT_ROUTE = '/dsh-shot/shot'
 const PING_ROUTE = '/dsh-shot/ping'
@@ -33,10 +37,10 @@ const SHELL = (() => {
     : join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 })()
 
-/** How long the user may spend on the overlay before the driver gives up. */
-const CAPTURE_BUDGET_MS = 180_000
+/** How long the user may spend on the selector before the driver gives up. */
+const CAPTURE_BUDGET_SECONDS = 180
 /** Room for the answer plus a wedged process being killed. */
-const DRIVER_BUDGET_MS = CAPTURE_BUDGET_MS + 30_000
+const DRIVER_BUDGET_MS = (CAPTURE_BUDGET_SECONDS + 30) * 1000
 const BODY_LIMIT_BYTES = 4_096
 const TITLE_LIMIT_CHARS = 160
 const RESTORE_BUDGET_MS = 20_000
@@ -134,10 +138,15 @@ function runDriver(args, budgetMs) {
   })
 }
 
-/** Last resort: ask the driver to pull a parked window back into view. */
+/**
+ * Last resort: pull a parked window back when the driver died before its own
+ * finally block could. Answers true when the window is known to be back.
+ */
 async function unpark(record) {
-  if (record === undefined || record === '') return
-  await runDriver(['-File', DRIVER, '-RestoreOnly', '-Record', record], RESTORE_BUDGET_MS)
+  if (record === undefined || record === '') return false
+  const run = await runDriver(['-File', DRIVER, '-RestoreOnly', '-Record', record], RESTORE_BUDGET_MS)
+  const answer = answerLine(run.stdout)
+  return answer !== undefined && answer.restored === true
 }
 
 export function apply(ctx) {
@@ -202,29 +211,34 @@ export function apply(ctx) {
               '-File', DRIVER,
               '-OutPath', pngFile,
               '-Record', recordFile,
-              '-Hide', park ? '1' : '0',
+              '-TimeoutSeconds', String(CAPTURE_BUDGET_SECONDS),
+              '-HideWindow', park ? '1' : '0',
               '-SourceDir', SCRIPTS,
             ]
             if (title !== '') args.push('-TitleFragment', title)
 
             const run = await runDriver(args, DRIVER_BUDGET_MS)
             if (run.expired) {
-              if (park) await unpark(recordFile)
+              const restored = park ? await unpark(recordFile) : true
               reply(res, 200, {
                 ok: false,
                 reason: 'failed',
-                message: 'the capture timed out; the window was put back',
+                restored,
+                message: restored
+                  ? 'the selector timed out; the window was put back'
+                  : 'the selector timed out and the window did not come back',
               })
               return
             }
 
             const answer = answerLine(run.stdout)
             if (answer === undefined) {
-              if (park) await unpark(recordFile)
+              const restored = park ? await unpark(recordFile) : true
               const detail = run.stderr.trim().split(/\r?\n/).slice(-3).join(' ')
               reply(res, 200, {
                 ok: false,
                 reason: 'failed',
+                restored,
                 message: detail === '' ? 'the capture driver exited with code ' + run.code : detail,
               })
               return
@@ -234,6 +248,7 @@ export function apply(ctx) {
                 ok: false,
                 reason: typeof answer.reason === 'string' && answer.reason !== '' ? answer.reason : 'failed',
                 message: typeof answer.message === 'string' ? answer.message : '',
+                restored: true,
               })
               return
             }
@@ -242,18 +257,14 @@ export function apply(ctx) {
             reply(res, 200, {
               ok: true,
               dataUrl: 'data:image/png;base64,' + bytes.toString('base64'),
-              // Everything the client needs to map its own coordinates onto the
-              // frozen frame, in image pixels.
               width: answer.width,
               height: answer.height,
-              left: answer.left,
-              top: answer.top,
-              restored: answer.restored === true,
+              restored: true,
               bytes: bytes.length,
             })
           } catch (error) {
-            if (park) await unpark(recordFile)
-            reply(res, 200, { ok: false, reason: 'failed', message: String(error) })
+            const restored = park ? await unpark(recordFile) : true
+            reply(res, 200, { ok: false, reason: 'failed', restored, message: String(error) })
           } finally {
             await rm(pngFile, { force: true }).catch(() => {})
             await rm(recordFile, { force: true }).catch(() => {})

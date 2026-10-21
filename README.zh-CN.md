@@ -2,8 +2,8 @@
 
 **给 DeepSeek Harness 输入框用的区域截图插件。**
 
-输入框 `+` 菜单里多一行。点它、选模式，DSH 窗口先让开，宿主那边拍一张桌面快照，
-你在冻结的画面上拖出真正想要的区域、随手标注，按绿勾 —— PNG 就落进输入框，作为
+输入框 `+` 菜单里多一行。点它、选模式，DSH 窗口先让开，一个原生选区窗体盖住整个桌面，
+你在真屏幕上拖出想要的区域、随手标注，按绿勾 —— PNG 就落进输入框，作为
 **待发送的附件**，跟下一条消息一起发出去。
 
 [English](README.md) | 中文
@@ -16,50 +16,47 @@
 | --- | --- |
 | 输入框 `+` → **截图** | 弹出两种模式的选项 |
 | **隐藏本窗口后截图** | 先把 DSH 收走，截到它后面的东西 |
-| **保持窗口可见** | DSH 留在屏幕上，截 DSH 自己 |
-| 在冻结画面上拖 | 拉出选区 |
+| **保持窗口可见** | DSH 留在屏幕上，也可以被框进去 |
+| 在冻结的桌面上拖 | 拉出选区，覆盖**整个**虚拟屏，1:1 |
 | 拖白色抓手 | 改选区大小（8 个抓手，最小 6×6） |
 | 拖内侧窄边条，或按住 `Ctrl` 在框内任意处拖 | 平移选区 |
-| 在框内拖 | 画一个矩形标注 |
+| 不按 `Ctrl` 在框内拖 | 画一个矩形标注 |
 | `Ctrl+Z` / ↶ 按钮 | 撤销最后一笔 |
 | `Enter` / 绿勾 | 确认，把 PNG 放进输入框 |
 | `Esc` / 红叉 / 右键 | 取消 |
 
 选的模式记在 `localStorage` 的 `dsh-screenshot.mode` 里。
 
-## 为什么要藏窗口
+## 为什么选区在原生层，不在页面里
 
-多数截图工具截的是「应用已经挡住的那块屏幕」。想给人看的东西偏偏在应用后面，就没辙。
-这个插件把自己的窗口让开一次快门的时间，然后放回去：
+选区以前是页面里的 DOM 覆盖层，那个形状注定不对：渲染进程的视口就是应用窗口，
+覆盖层永远出不了窗口矩形，冻结的桌面只能缩着塞进去。你只能在「屏幕的照片」上框，
+不是在屏幕上框。
 
-```
-点击  →  SW_MINIMIZE 收起 DSH 窗口  →  等合成器稳定
-      →  BitBlt 把整个虚拟屏拷进一张位图
-      →  SW_RESTORE + SetForegroundWindow        （写在 finally 里）
-      →  浏览器覆盖层：在冻结帧上拖动 / 缩放 / 标注
-      →  canvas 裁切 + 标注  →  一张 PNG  →  输入框草稿
-```
+现在是一个无父窗体、尺寸取 `SystemInformation.VirtualScreen`、置顶的 WinForms 窗体，
+盖住每一台显示器，1:1。框选、八个抓手、内侧窄边条平移、标注工具栏都在它上面。
+客户端半只负责把结果递过去。
 
 这个形状带来两件事，都是故意的：
 
-- **窗口只离开几毫秒。** 框选在之后、在页面里、在冻结的位图上做。没人需要在慢慢调矩形
-  的时候一直让 DSH 藏着。
-- **原生那半边没有界面。** 它只是一个快门，所以不存在两套选区控件互相同步的问题。
+- **窗口只在你框选的那段时间让开。** 藏/恢复是一对包住选区的 `try/finally`，
+  取消、超时、抛异常都会把 DSH 放回来。
+- **只有一套坐标系。** 指针位置、裁切框、存下来的 PNG 全是真实屏幕像素，
+  没有 `object-fit: contain` 的缩放要反算。
 
-恢复写在 `finally` 里，所以失败或超时也照样把窗口拉回来。句柄事先写进记录文件，
-`scripts\shutter.ps1 -RestoreOnly` 能在进程被杀之后兜底。
+句柄在藏窗口之前先写进记录文件，`scripts\snip.ps1 -RestoreOnly` 能在进程被杀之后兜底。
 
 ## 运行条件
 
-- **Windows 10/11。** 隐藏窗口和拷贝桌面都是 Win32 调用，没有 macOS / Linux 路径。
+- **Windows 10/11。** 收起窗口和在桌面上画东西都是 Win32 调用，没有 macOS / Linux 路径。
 - 一个把 `commandUi` 服务与 `webServer` + `connection` 宿主服务暴露出来的 DSH 桌面版
   （发行版桌面 profile 就是）。
-- Windows PowerShell 5.1，系统自带。别的都不用装 —— C# 助手由 `Add-Type` 现场编译。
+- Windows PowerShell 5.1，系统自带。别的都不用装 —— C# 选区窗体由 `Add-Type` 现场编译。
 
 ## 安装
 
 插件就是一个普通的 DSH bundle：`package.json` + 宿主半（`index.js`）+ 客户端半
-（`client.js`）+ `cordis.patch.yml` + `scripts/` 里的原生快门。
+（`client.js`）+ `cordis.patch.yml` + `scripts/` 里的原生选区。
 
 1. 克隆到 profile 之外的地方：
 
@@ -97,7 +94,7 @@
    `file/goal/plan/feedback`，其它贡献一律塞进 Commands 段，所以本插件会把自己那一行
    重排一次，挪到文件旁边。
 2. 选一个模式。选择会被记住。
-3. 拖出区域，用抓手调，想标注就标。
+3. 桌面在暗幕下冻住。拖出区域，用抓手调，想标注就标。
 4. 按 `Enter` 或绿勾。
 5. 图片出现在输入框上方，是草稿。打字回车才发出去。
 
@@ -107,9 +104,9 @@
 
 | 半边 | 文件 | 干什么 |
 | --- | --- | --- |
-| 宿主 | `index.js` | `POST /dsh-shot/shot` → 起 PowerShell 跑 `scripts/shutter.ps1`，回一条 PNG data URL 加桌面原点。`GET /dsh-shot/ping` 是存活探针。 |
-| 客户端 | `client.js` | 注册 `shot` 命令与两种模式，等选择面板消失，发请求，然后渲染负责裁切与标注的覆盖层。 |
-| 原生 | `scripts/shutter.ps1` + `scripts/Snap.cs` | 藏窗口（可选）→ `BitBlt` 虚拟屏 → 存 PNG → 恢复。也能用 `-RestoreOnly` 按需恢复。 |
+| 宿主 | `index.js` | `POST /dsh-shot/shot` → 起 PowerShell 跑 `scripts/snip.ps1`，回一张成品 PNG 的 data URL。`GET /dsh-shot/ping` 是存活探针。 |
+| 客户端 | `client.js` | 注册 `shot` 命令与两种模式，等选择面板消失，发请求，把回来的 PNG 放进输入框。 |
+| 原生 | `scripts/snip.ps1` + `scripts/DshShot.cs` | 藏窗口（可选）→ 拷贝虚拟屏 → 置顶全屏选区（框选、抓手、平移、标注）→ 合成裁切 → 存 PNG → 恢复。也能用 `-RestoreOnly` 按需恢复。 |
 
 两条路由都过 `ctx.connection.requestRejection(req)`，继承宿主正常的请求策略，
 不开没鉴权的洞。
@@ -118,11 +115,12 @@
 
 | 路由 | 方法 | 请求体 | 回答 |
 | --- | --- | --- | --- |
-| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"left":X,"top":Y,"restored":true,"bytes":N}` 或 `{"ok":false,"reason":"failed","message":"…"}` |
+| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"restored":true,"bytes":N}` 或 `{"ok":false,"reason":"cancelled"\|"failed","message":"…"}` |
 | `/dsh-shot/ping` | `GET` | — | `{"ok":true,"driver":"…","shell":"…"}` |
 
-请求体上限 4 KB，快门上限 180 s。`title` 拿去匹配窗口标题找要收起的那个窗口；
-匹配不到就报错，不会去猜「反正最前面那个」。
+请求体上限 4 KB，选区上限 180 s。`title` 拿去匹配窗口标题找要收起的那个窗口；
+匹配不到就报错，不会去猜「反正最前面那个」。`width`/`height` 是**裁完之后**的尺寸，
+不是桌面尺寸。
 
 ### 为什么合成一个 `drop` 事件
 
@@ -142,41 +140,44 @@
 node --check index.js
 node --check client.js
 
-# 拍一次，窗口不动：打印一行 JSON 并写出 PNG
+# 固定区域、窗口不动：打印一行 JSON 并写出 PNG
 powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
-  -File scripts\shutter.ps1 -OutPath "$env:TEMP\shot.png" -Hide 0
+  -File scripts\snip.ps1 -OutPath "$env:TEMP\shot.png" -AutoSelect '200,150,800,500' -HideWindow 0
 
-# 收起窗口、拍照、放回去
+# 收起窗口、截、放回去
 powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
-  -File scripts\shutter.ps1 -OutPath "$env:TEMP\shot2.png" -Hide 1 `
-  -TitleFragment 'DeepSeek Harness' -Record "$env:TEMP\shot2.parked"
+  -File scripts\snip.ps1 -OutPath "$env:TEMP\shot2.png" -AutoSelect '100,100,640,360' `
+  -HideWindow 1 -TitleFragment 'DeepSeek Harness' -Record "$env:TEMP\shot2.parked"
 
 # 兜底：万一哪次被杀在半路
 powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
-  -File scripts\shutter.ps1 -RestoreOnly -Record "$env:TEMP\shot2.parked"
+  -File scripts\snip.ps1 -RestoreOnly -Record "$env:TEMP\shot2.parked"
 ```
 
-预期：一行 JSON 里 `"ok":true` 且尺寸是真实桌面（1080p 就是 1920×1080，不是被 DPI
-缩过的 1536×864；快门开头先调 `SetProcessDPIAware`）。第二条命令里
-`"restored":true` 表示窗口回来了。
+预期：一行 JSON 里 `"ok":true`，第一条命令的 `"width":800,"height":500` 是**裁出来的
+尺寸**、不是桌面尺寸。带 `-AutoSelect` 就跳过选区窗体，所以这一条能无人值守跑。
+第三条命令的 `"restored":true` 表示窗口回来了。
+
+不带 `-AutoSelect` 就是真的弹出选区，阻塞到你确认或按 `Esc`；取消会回
+`{"ok":false,"reason":"cancelled"}`。
 
 ## 出问题看这里
 
 | 现象 | 原因 / 修法 |
 | --- | --- |
 | `+` 菜单里没有那一行 | bundle 没被组合。查 `bundles` 数组和 `node_modules` 的 junction，然后重启。 |
-| 控制台里 `Screenshot failed` | 快门报了错。跑上面的自检 —— 同一个脚本，会打印原因。 |
-| 窗口一直藏着不出来 | 快门被杀在半路。跑 `scripts\shutter.ps1 -RestoreOnly -Record <那个 .parked 文件>`，或点任务栏里的 DSH。 |
+| 控制台里 `Screenshot failed` | 驱动报了错。跑上面的自检 —— 同一个脚本，会打印原因。 |
+| 窗口一直藏着不出来 | 驱动被杀在半路。跑 `scripts\snip.ps1 -RestoreOnly -Record <那个 .parked 文件>`，或点任务栏里的 DSH。 |
 | 截图里带上了选项面板 | 面板还没关完。刷新页面；客户端会先轮询等面板（上限 1.5 s）再拍。 |
+| 选区比屏幕小一圈 | 机器报的是缩放后的虚拟屏，进程不是 DPI 感知的。`DshShot.cs` 在量尺寸之前会调 `SetProcessDpiAwarenessContext`；如果被外层剥掉了，照上面带 `-STA` 跑。 |
 | 非 Windows 上没反应 | 正常，插件只支持 Windows。 |
 
 ## 平台与已知边界
 
 - 只支持 Windows 10/11。
-- 整个虚拟屏冻结成一张画布，所以跨显示器选区能用，但不同 DPI 的显示器会被拉平到
-  同一套坐标上。
+- 选区横跨整个虚拟屏，所以跨显示器能用，但不同 DPI 的显示器会被拉平到同一套坐标上。
 - 标注只有一种颜色（红）的矩形；`Ctrl+Z` 只撤最后一笔。
-- 冻结帧是快照：覆盖层开着的时候，后面别处变了不会反映。
+- 冻结帧是快照：选区开着的时候，后面别处变了不会反映。
 - 「保持窗口可见」截的是当前屏幕上的一切，所以想截 DSH 自己得先把它切到前台。
 
 ## 许可

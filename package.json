@@ -1,9 +1,9 @@
 {
   "name": "dsh-screenshot",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Region screenshot for the DeepSeek Harness composer: the host takes one desktop snapshot, and the screenshot is cropped, resized and annotated in a browser overlay before it lands in the composer as a pending attachment.",
+  "description": "Region screenshot for the DeepSeek Harness composer: a topmost native selector covers the whole virtual screen, and the finished PNG lands in the composer as a pending attachment.",
   "license": "MIT",
   "icon": "./icon.svg",
   "keywords": [

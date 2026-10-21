@@ -1,14 +1,14 @@
-﻿# dsh-screenshot native driver.
+# dsh-screenshot native driver.
 #
 # Two modes in one file:
-#   default        take one shot  -> one JSON line on stdout
+#   default        open the full-screen selector, crop, annotate -> one JSON line
 #   -RestoreOnly   put a parked window back (the safety net the Host half runs
 #                  when the capture child dies before its own restore)
 #
 # Output contract, always exactly one line on stdout:
-#   {"ok":true,"path":"...","width":W,"height":H,"left":X,"top":Y,
-#    "restored":true|false,"reason":"","message":""}
-#   {"ok":false,...,"reason":"failed","message":"..."}
+#   {"ok":true,"path":"...","width":W,"height":H,"restored":true|false,
+#    "reason":"","message":""}
+#   {"ok":false,...,"reason":"cancelled"|"failed","message":"..."}
 #
 # Exit code stays 0 for an answered run. A nonzero exit means this driver itself
 # failed to start, and the caller should surface stderr instead.
@@ -16,10 +16,12 @@
 [CmdletBinding()]
 param(
   [string]$OutPath = '',
+  [int]$TimeoutSeconds = 180,
+  [string]$TargetFile = '',
+  [string]$AutoSelect = '',
   [string]$TitleFragment = '',
-  [int]$Hide = 1,
+  [int]$HideWindow = 1,
   [string]$Record = '',
-  [int]$SettleMs = 700,
   [string]$SourceDir = '',
   [switch]$RestoreOnly
 )
@@ -68,32 +70,37 @@ if ($RestoreOnly) {
 }
 
 if ([string]::IsNullOrEmpty($OutPath)) {
-  Write-Line '{"ok":false,"path":"","width":0,"height":0,"left":0,"top":0,"restored":false,"reason":"failed","message":"-OutPath is required"}'
+  Write-Line '{"ok":false,"path":"","width":0,"height":0,"restored":false,"reason":"failed","message":"-OutPath is required"}'
   return
 }
 
 if ([string]::IsNullOrEmpty($SourceDir)) { $SourceDir = $PSScriptRoot }
 
-$helper = Join-Path $SourceDir 'Snap.cs'
-if (-not (Test-Path -LiteralPath $helper)) {
-  Write-Line ('{"ok":false,"path":"","width":0,"height":0,"left":0,"top":0,"restored":false,"reason":"failed","message":"missing Snap.cs next to this script"}')
+$source = Join-Path $SourceDir 'DshShot.cs'
+if (-not (Test-Path -LiteralPath $source)) {
+  Write-Line '{"ok":false,"path":"","width":0,"height":0,"restored":false,"reason":"failed","message":"missing DshShot.cs next to this script"}'
   return
 }
 
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
-# Add-Type -Path compiles against a minimal reference set; hand it the drawing and
-# forms assemblies that are actually loaded, or the usings will not resolve.
-Add-Type -Path $helper -ReferencedAssemblies @(
+# Add-Type -Path compiles against a bare reference set; point it at the drawing
+# and forms assemblies actually loaded above so the usings resolve.
+Add-Type -Path $source -ReferencedAssemblies @(
   [System.Drawing.Bitmap].Assembly.Location
-  [System.Windows.Forms.SystemInformation].Assembly.Location
+  [System.Windows.Forms.Form].Assembly.Location
 )
 
+# The handle record is how the Host half can still put the window back when this
+# process is killed before DshShot's own finally block runs.
+$parkedRecord = $Record
+if ([string]::IsNullOrEmpty($parkedRecord)) { $parkedRecord = $TargetFile }
+
 try {
-  $json = [Snap]::Run($OutPath, $Hide, $TitleFragment, $Record, $SettleMs)
+  $json = [DshShot]::RunJson($OutPath, $TimeoutSeconds, $parkedRecord, $AutoSelect, $TitleFragment, ($HideWindow -ne 0))
   Write-Line $json
 }
 catch {
   $message = $_.Exception.Message -replace '\\', '/' -replace '"', "'"
-  Write-Line ('{"ok":false,"path":"","width":0,"height":0,"left":0,"top":0,"restored":false,"reason":"failed","message":"' + $message + '"}')
+  Write-Line ('{"ok":false,"path":"","width":0,"height":0,"restored":false,"reason":"failed","message":"' + $message + '"}')
 }
