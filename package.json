@@ -1,0 +1,63 @@
+{
+  "name": "dsh-screenshot",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Region screenshot for the DeepSeek Harness composer: hides the DSH window, lets you drag and annotate a rectangle over anything behind it, then drops the PNG into the composer as a pending attachment.",
+  "license": "MIT",
+  "icon": "./icon.svg",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "screenshot",
+    "capture",
+    "annotation",
+    "windows"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "scripts/*",
+    "locale/*.json",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-commands"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dcmwfg/dsh-screenshot.git"
+  },
+  "homepage": "https://github.com/Dcmwfg/dsh-screenshot#readme",
+  "bugs": {
+    "url": "https://github.com/Dcmwfg/dsh-screenshot/issues"
+  }
+}

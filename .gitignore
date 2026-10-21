@@ -1,0 +1,8 @@
+node_modules/
+*.log
+*.orig-bak
+tmp/
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
