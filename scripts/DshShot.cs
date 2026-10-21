@@ -281,10 +281,11 @@ public static class DshShot
     }
 
     /// <summary>
-    /// Full-screen selection overlay: drag a region, then annotate it in place
-    /// with rectangles and arrows and confirm with the toolbar's tick, the way a
-    /// chat client's screenshot tool works. The marks are composited into the
-    /// returned bitmap, so callers only ever save finished pixels.
+    /// Full-screen selection overlay: drag a region, then adjust it in place -
+    /// handles resize, the body slides, Ctrl+drag draws a mark - and confirm with
+    /// the toolbar's tick, the way a chat client's screenshot tool works. The
+    /// marks are composited into the returned bitmap, so callers only ever save
+    /// finished pixels.
     /// </summary>
     public sealed class Selector : Form
     {
@@ -652,6 +653,36 @@ public static class DshShot
             Invalidate();
         }
 
+        /// <summary>True while Ctrl is down, which turns a body drag into a mark.</summary>
+        private static bool CtrlHeld()
+        {
+            return (Control.ModifierKeys & Keys.Control) == Keys.Control;
+        }
+
+        /// <summary>
+        /// Act on a press inside the frame: slide it, or - when the caller asks for a
+        /// mark - start drawing one. The modifier is passed in rather than read here,
+        /// so the decision can be exercised without a real keyboard.
+        /// </summary>
+        private void BodyPressed(Point point, bool mark)
+        {
+            if (!mark)
+            {
+                moving = true;
+                press = point;
+                dragStart = Selection;
+                return;
+            }
+
+            if (!InsideBody(point)) return;
+            annotating = true;
+            pending = new Annotation();
+            pending.Kind = tool;
+            pending.From = point;
+            pending.To = point;
+            Invalidate();
+        }
+
         /// <summary>Slide the whole frame by the drag delta, clamped to the screen.</summary>
         private void MoveTo(Point point)
         {
@@ -853,7 +884,7 @@ public static class DshShot
 
         private void DrawHint(Graphics g)
         {
-            string hint = "\u62d6\u52a8\u9009\u62e9\u533a\u57df    \u00b7    \u9009\u4e2d\u540e\u53ef\u62d6\u8fb9\u6841\u8c03\u6574\u5927\u5c0f    \u00b7    Esc \u53d6\u6d88";
+            string hint = "\u62d6\u52a8\u9009\u62e9\u533a\u57df    \u00b7    \u6846\u5185\u62d6\u52a8\u79fb\u52a8\u6846    \u00b7    \u8fb9\u6841\u8c03\u6574\u5927\u5c0f    \u00b7    Ctrl+\u62d6\u6807\u6ce8    \u00b7    Esc \u53d6\u6d88";
             SizeF size = g.MeasureString(hint, LabelFont);
             float x = (ClientSize.Width - size.Width) / 2f;
             float y = 56f;
@@ -877,8 +908,11 @@ public static class DshShot
 
             if (editing)
             {
-                // The frame stays live after the first drag: handles resize it,
-                // its inner border strip slides it, and the body draws a mark.
+                // The frame stays live after the first drag: handles resize it, the
+                // body and the inner border strip slide it, and holding Ctrl turns a
+                // body drag into a mark. Dragging the body moves the frame because
+                // that is what the pointer looks like it should do; marking is the
+                // exception, so it costs a modifier.
                 int hit = HandleAt(e.Location);
                 if (hit != 0)
                 {
@@ -889,23 +923,8 @@ public static class DshShot
                     return;
                 }
 
-                bool wantsMove = Control.ModifierKeys == Keys.Control ||
-                    (Selection.Contains(e.Location) && !InsideBody(e.Location));
-                if (wantsMove)
-                {
-                    moving = true;
-                    press = e.Location;
-                    dragStart = Selection;
-                    return;
-                }
-
-                if (!InsideBody(e.Location)) return;
-                annotating = true;
-                pending = new Annotation();
-                pending.Kind = tool;
-                pending.From = e.Location;
-                pending.To = e.Location;
-                Invalidate();
+                if (!Selection.Contains(e.Location)) return;
+                BodyPressed(e.Location, Control.ModifierKeys == Keys.Control);
                 return;
             }
 
@@ -944,11 +963,15 @@ public static class DshShot
                 return;
             }
 
-            // Idle in edit mode: show the cursor the handles imply.
+            // Idle in edit mode: show the cursor the handles imply. Inside the frame
+            // the pointer offers a move, and Ctrl flips it back to the crosshair that
+            // draws a mark.
             if (editing)
             {
                 int hit = HandleAt(e.Location);
-                Cursor = hit != 0 ? CursorFor(hit) : (Selection.Contains(e.Location) ? Cursors.SizeAll : Cursors.Cross);
+                if (hit != 0) Cursor = CursorFor(hit);
+                else if (!Selection.Contains(e.Location)) Cursor = Cursors.Cross;
+                else Cursor = CtrlHeld() ? Cursors.Cross : Cursors.SizeAll;
             }
         }
 

@@ -20,8 +20,8 @@ English | [中文](README.zh-CN.md)
 | **Keep this window visible** | DSH stays on screen and can be part of the crop |
 | Drag on the frozen desktop | Selection rectangle, over the **whole** virtual screen at 1:1 |
 | Drag a white grip | Resize the selection (8 grips, min 6×6) |
-| Drag the inner border strip, or `Ctrl`+drag anywhere inside | Move the selection |
-| Drag inside the frame without `Ctrl` | Draw a rectangle annotation |
+| Drag anywhere inside the frame (or the inner border strip) | Move the selection |
+| `Ctrl`+drag inside the frame | Draw a rectangle annotation |
 | `Ctrl+Z` / ↶ button | Undo the last mark |
 | `Enter` / green ✓ | Accept and drop the PNG in the composer |
 | `Esc` / red ✕ / right click | Cancel |
@@ -101,7 +101,8 @@ A junction (rather than a copy) means edits to the checkout are live after a res
    every other contribution into the Commands section, so this plugin re-sorts its own row
    once to sit next to File.
 2. Pick a mode. The picker remembers the last choice.
-3. The desktop freezes under a dim veil. Drag the region, adjust it with the grips, annotate
+3. The desktop freezes under a dim veil. Drag the region, adjust it with the grips (a plain
+   drag inside the frame moves it, `Ctrl`+drag marks it), annotate
    if you want.
 4. Press `Enter` or the green tick.
 5. The image appears above the input box as a draft. Typing and pressing Enter sends it.
@@ -189,7 +190,8 @@ or press `Esc`; a cancel answers `{"ok":false,"reason":"cancelled"}`.
 - Windows 10/11 only.
 - The selector spans the whole virtual screen, so multi-monitor regions work, but monitors
   with different DPI are flattened onto one coordinate grid.
-- Annotations are rectangles in one colour (red); `Ctrl+Z` undoes the last mark only.
+- Annotations are rectangles in one colour (red); `Ctrl+Z` undoes the last mark only. Marking
+  costs a modifier because the plain body drag belongs to moving the frame.
 - The frozen frame is a snapshot: anything that changes behind the selector is not reflected.
 - "Keep this window visible" captures whatever is on screen, so bring DSH to the front first
   if you want to include DSH itself.
