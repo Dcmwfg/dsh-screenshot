@@ -884,7 +884,7 @@ public static class DshShot
 
         private void DrawHint(Graphics g)
         {
-            string hint = "\u62d6\u52a8\u9009\u62e9\u533a\u57df    \u00b7    \u6846\u5185\u62d6\u52a8\u79fb\u52a8\u9009\u533a    \u00b7    \u62d6\u624b\u67c4\u8c03\u6574\u5927\u5c0f    \u00b7    Ctrl+\u62d6\u52a8\u6807\u6ce8    \u00b7    Esc \u53d6\u6d88";
+            string hint = "\u62d6\u52a8\u9009\u62e9\u533a\u57df    \u00b7    \u6846\u5185\u62d6\u52a8\u79fb\u52a8\u9009\u533a    \u00b7    \u62d6\u52a8\u8fb9\u6cbf\u8c03\u6574\u5927\u5c0f    \u00b7    Ctrl + \u62d6\u52a8\u8fdb\u884c\u6807\u6ce8    \u00b7    \u6309 Esc \u53d6\u6d88";
             SizeF size = g.MeasureString(hint, LabelFont);
             float x = (ClientSize.Width - size.Width) / 2f;
             float y = 56f;
