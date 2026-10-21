@@ -67,16 +67,43 @@ public static class DshShot
     };
 
     /// <summary>
-    /// A launcher shell that hosts the page in its own native window: DSH-X
-    /// runs a Tauri/wry window with a WebView2 child, so the page lives inside
-    /// a process that is neither the desktop build nor a browser. The name
-    /// alone proves nothing (any program can be called "dsh"), so a window is
-    /// only accepted when it also owns a child of class WRY_WEBVIEW - that is
-    /// wry's own webview host and it does not appear by accident.
+    /// Child window classes that mean "this window is showing a web page in an
+    /// embedded webview". A launcher that wraps the web build keeps the page in
+    /// its own native window, and the toolkit decides the class name: wry/Tauri
+    /// (DSH-X) uses WRY_WEBVIEW, Electron and every Chromium-based shell uses
+    /// Chrome_RenderWidgetHostHWND / Chrome_WidgetWin_0, CEF uses
+    /// CefBrowserWindow, a hand-rolled WebView2 host may use WebViewHost.
+    ///
+    /// Matching on the class instead of on a list of launcher names is the
+    /// point: any quick launcher that wraps the page is found, including ones
+    /// that do not exist yet. The name would only ever cover the ones known
+    /// today, and a name proves nothing anyway - any program can be called
+    /// "dsh".
     /// </summary>
-    private static readonly string[] ShellProcesses = { "dsh", "dsh-x", "dshx" };
+    private static readonly string[] WebviewChildClasses =
+    {
+        "WRY_WEBVIEW",
+        "Chrome_RenderWidgetHostHWND",
+        "Chrome_WidgetWin_0",
+        "CefBrowserWindow",
+        "WebViewHost",
+        "EdgeWebViewHost"
+    };
 
-    private const string WryWebviewClass = "WRY_WEBVIEW";
+    /// <summary>
+    /// Processes that must never be stepped aside, whatever their window owns.
+    /// Editors and IDEs host a webview too (VS Code, Discord, Spotify, every
+    /// Electron app), so "owns a webview" alone would happily hide the wrong
+    /// program. These are the consoles a launcher spawns and the OS's own
+    /// chrome - stepping those aside buys nothing and looks like a bug.
+    /// </summary>
+    private static readonly string[] NeverStepAside =
+    {
+        "explorer", "dwm", "csrss", "winlogon", "wininit", "services", "lsass",
+        "powershell", "pwsh", "cmd", "conhost", "openconsole", "windowsterminal",
+        "wt", "taskmgr", "searchhost", "shellexperiencehost", "startmenuexperiencehost",
+        "textinputhost"
+    };
 
     /// <summary>Outcome of one capture attempt; serialized by RunJson.</summary>
     public sealed class Outcome
@@ -126,12 +153,14 @@ public static class DshShot
         // that kind of window wants to be stepped aside. There are two kinds of
         // window showing this page:
         //
-        //   shell   - the window belongs to the app: the desktop build serves
-        //             the page from dsh-app://app, and DSH-X hosts it in its own
-        //             Tauri window (identified by the WRY_WEBVIEW child, since
-        //             its caption is the launcher's own - "DSH-X"). Both are
-        //             handled exactly alike: hide the window, which is what the
-        //             desktop build has always done.
+        //   shell   - the window belongs to the app that hosts it: the desktop
+        //             build serves the page from dsh-app://app, and any launcher
+        //             that wraps the web build keeps it in a window of its own.
+        //             Those are recognised by structure, not by name - the window
+        //             owns an embedded webview child (see OwnsWebview) - so a
+        //             launcher nobody has heard of yet is covered, including any
+        //             Tauri, Electron, CEF or WebView2 wrapper. Shells are
+        //             hidden, which is what the desktop build has always done.
         //   browser - a real browser tab. Nothing about the page names its
         //             window, so only a process on the browser list is ever
         //             touched, and it is minimized rather than hidden so the
@@ -153,7 +182,7 @@ public static class DshShot
             if (overrideKind == "shell")
             {
                 if (foregroundUsable && IsShellWindow(foreground)) target = foreground;
-                if (target == IntPtr.Zero) target = FindShellWindow();
+                if (target == IntPtr.Zero) target = FindShellWindow(titleFragment);
             }
             else if (overrideKind == "browser")
             {
@@ -188,7 +217,7 @@ public static class DshShot
                     if (target == IntPtr.Zero) target = FindBrowserByTitle(titleFragment);
                     if (target == IntPtr.Zero) target = front;
                 }
-                if (target == IntPtr.Zero) target = FindShellWindow();
+                if (target == IntPtr.Zero) target = FindShellWindow(titleFragment);
             }
 
             if (target == IntPtr.Zero || !IsWindow(target))
@@ -443,46 +472,112 @@ public static class DshShot
     /// </summary>
     private static bool IsShellWindow(IntPtr hWnd)
     {
+        if (hWnd == IntPtr.Zero || !IsWindow(hWnd) || !IsWindowVisible(hWnd)) return false;
+
+        // A shell is a top-level window. A webview child is never the thing to
+        // step aside - hiding it would leave the frame on screen.
+        if (GetAncestor(hWnd, GA_ROOT) != hWnd) return false;
+
         uint pid;
         GetWindowThreadProcessId(hWnd, out pid);
         string processName = "";
         try { processName = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; }
         catch { return false; }
 
-        bool nameOk = false;
-        foreach (string shell in ShellProcesses)
-        {
-            if (string.Equals(processName, shell, StringComparison.OrdinalIgnoreCase)) { nameOk = true; break; }
-        }
-        if (!nameOk) return false;
+        // A browser owns a webview child too, and a browser is minimized rather
+        // than hidden, so it is never a shell - the browser check has to win.
+        if (IsBrowserWindow(hWnd)) return false;
 
-        bool hasWebview = false;
-        EnumChildWindows(hWnd, delegate(IntPtr child, IntPtr lParam)
+        foreach (string safe in NeverStepAside)
         {
-            System.Text.StringBuilder name = new System.Text.StringBuilder(64);
-            GetClassName(child, name, name.Capacity);
-            if (string.Equals(name.ToString(), WryWebviewClass, StringComparison.Ordinal)) { hasWebview = true; return false; }
-            return true;
-        }, IntPtr.Zero);
-        return hasWebview;
+            if (string.Equals(processName, safe, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+
+        return OwnsWebview(hWnd);
     }
 
-    /// <summary>Fallback for the shell build: the one visible shell window, if there is exactly one.</summary>
-    private static IntPtr FindShellWindow()
+    /// <summary>
+    /// True when this window hosts a web page in an embedded webview, whatever
+    /// toolkit put it there. Children are walked recursively because the
+    /// webview host is not always a direct child: Tauri puts WRY_WEBVIEW under
+    /// a couple of wrappers, and some hosts nest Chrome_WidgetWin_0 inside the
+    /// frame window.
+    /// </summary>
+    private static bool OwnsWebview(IntPtr hWnd)
     {
-        IntPtr found = IntPtr.Zero;
-        int count = 0;
+        bool found = false;
+        EnumChildWindows(hWnd, delegate(IntPtr child, IntPtr lParam)
+        {
+            System.Text.StringBuilder name = new System.Text.StringBuilder(128);
+            GetClassName(child, name, name.Capacity);
+            string cls = name.ToString();
+            foreach (string webview in WebviewChildClasses)
+            {
+                // Prefix match: Chromium appends a counter in some builds
+                // ("Chrome_RenderWidgetHostHWND"), wry appends nothing today but
+                // has added suffixes before.
+                if (cls.StartsWith(webview, StringComparison.Ordinal)) { found = true; return false; }
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
 
+    /// <summary>
+    /// Last resort for a shell-hosted page: pick the window that most plausibly
+    /// hosts it. Every window that owns a webview qualifies structurally, and
+    /// the machine also runs apps that own one for their own sake (an editor,
+    /// a chat client), so a bare "the only one" rule stops working the moment
+    /// the user keeps such an app open. The ranking below is a tie-break, never
+    /// the identification:
+    ///
+    ///   1. the caption carries the page title - some launchers do that
+    ///   2. the process name looks like this app's own ("dsh", "dsh-x", ...)
+    ///   3. exactly one candidate left, otherwise nothing is touched
+    ///
+    /// Step 3 refusing is the important half: guessing among unrelated windows
+    /// means hiding the wrong program, and a screenshot that happens to include
+    /// the page is the better failure.
+    /// </summary>
+    private static IntPtr FindShellWindow(string titleFragment)
+    {
+        System.Collections.Generic.List<IntPtr> candidates = new System.Collections.Generic.List<IntPtr>();
         EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
         {
-            if (!IsWindowVisible(hWnd)) return true;
-            if (!IsShellWindow(hWnd)) return true;
-            count++;
-            found = hWnd;
+            if (IsShellWindow(hWnd)) candidates.Add(hWnd);
             return true;
         }, IntPtr.Zero);
 
-        return count == 1 ? found : IntPtr.Zero;
+        if (candidates.Count == 0) return IntPtr.Zero;
+        if (candidates.Count == 1) return candidates[0];
+
+        if (titleFragment != null && titleFragment.Trim().Length >= 4)
+        {
+            System.Collections.Generic.List<IntPtr> titled = new System.Collections.Generic.List<IntPtr>();
+            foreach (IntPtr candidate in candidates)
+            {
+                if (CaptionMatches(candidate, titleFragment)) titled.Add(candidate);
+            }
+            if (titled.Count == 1) return titled[0];
+            if (titled.Count > 1) candidates = titled;
+        }
+
+        System.Collections.Generic.List<IntPtr> owned = new System.Collections.Generic.List<IntPtr>();
+        foreach (IntPtr candidate in candidates)
+        {
+            if (ProcessNameOf(candidate).StartsWith("dsh", StringComparison.OrdinalIgnoreCase)) owned.Add(candidate);
+        }
+        if (owned.Count == 1) return owned[0];
+
+        return IntPtr.Zero;
+    }
+
+    private static string ProcessNameOf(IntPtr hWnd)
+    {
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        try { return System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; }
+        catch { return ""; }
     }
 
     private static Rectangle ParseRectangle(string spec)

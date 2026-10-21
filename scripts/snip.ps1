@@ -21,9 +21,13 @@ param(
   [string]$AutoSelect = '',
   [string]$TitleFragment = '',
   [int]$HideWindow = 1,
-  # Which window may be stepped aside: 'title' (desktop shell, named by the page
-  # caption) or 'browser' (browser build, foreground window but only when its
-  # process is a known browser).
+  # Which window may be stepped aside:
+  #   title   - the desktop build, found by the page caption (default)
+  #   browser - a real browser tab; the foreground window, accepted only when
+  #             its process is on the browser list
+  #   shell   - a launcher that wraps the web build in its own window
+  #   auto    - let the driver decide: foreground first, then caption, then the
+  #             only window that hosts a webview
   [string]$TargetKind = 'title',
   # How to step aside: 'hide' removes it from the taskbar, 'minimize' leaves the
   # taskbar button so the restore is the ordinary one.

@@ -37,8 +37,18 @@ kinds of host can be showing this page and they can name their own window very d
 | Host | How it is recognised | How it gives way |
 | --- | --- | --- |
 | Desktop build (page on `dsh-app://app`) | the page origin | **hide** |
-| Launcher wrapping the page in its own native window (e.g. DSH-X, a Tauri shell) | its process is a shell **and** it owns a `WRY_WEBVIEW` child | **hide** |
+| Any launcher wrapping the page in its own native window (Tauri, Electron, CEF, WebView2) | the window **owns an embedded webview child** (`WRY_WEBVIEW`, `Chrome_RenderWidgetHostHWND`, `Chrome_WidgetWin_0`, `CefBrowserWindow`, `WebViewHost`, `EdgeWebViewHost`) | **hide** |
 | A real browser tab | its process is on the browser list | **minimise** |
+
+Shells are recognised by **structure, not by process name**. The first cut only accepted the
+names `dsh` / `dsh-x` / `dshx`, which covers exactly the launchers known at the time — and a name
+proves nothing anyway, since any program can be called `dsh`. Now any window that owns an
+embedded webview child counts, so a launcher nobody has heard of yet is covered too.
+
+The reverse case is why "owns a webview" cannot stand alone: editors, chat clients and every other
+Electron app own one for their own sake. Consoles (`powershell`, `pwsh`, `cmd`, `conhost`,
+`windowsterminal`, …) and the OS shell (`explorer`, `dwm`, …) are always excluded, and a browser
+is classified as a browser before anything else.
 
 Both shells are hidden the same way, so a launcher needs no second code path — the only thing
 that changes is how the window is *found*. A browser is minimised rather than hidden: a minimised
@@ -52,8 +62,10 @@ Recognition never rests on a caption alone:
 - then the page title is matched against a caption (four characters or more, consoles excluded);
 - then any **known browser process** (`chrome`, `msedge`, `firefox`, `brave`, `opera`,
   `vivaldi`, …), because a browser is the one host a native shell cannot be;
-- only when nothing else is named, the **single** visible shell window is used — that is how a
-  launcher is found even though its caption is its own ("DSH-X") and not the page's.
+- only when nothing else is named do the shell candidates get ranked: a caption carrying the page
+  title, then a process name that looks like this app's own (`dsh*`), and **more than one
+  candidate left means nothing is touched** — guessing among unrelated windows would hide
+  somebody's program, and a picture that includes the client is the better failure.
 
 Anything else is left alone and the capture proceeds with the screen as it stands. That is a
 deliberate trade: a picture that happens to include the client beats moving a window we could not
