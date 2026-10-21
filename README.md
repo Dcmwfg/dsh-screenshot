@@ -15,7 +15,7 @@ English | [中文](README.zh-CN.md)
 
 | Action | Result |
 | --- | --- |
-| Composer `+` → **Screenshot** | Opens the two-mode picker |
+| Composer `+` → **Screenshot** | Desktop build: two modes. Browser build: one (see below) |
 | **Hide this window, then capture** | DSH is parked first, so the shot shows what is behind it |
 | **Keep this window visible** | DSH stays on screen and can be part of the crop |
 | Drag on the frozen desktop | Selection rectangle, over the **whole** virtual screen at 1:1 |
@@ -27,6 +27,28 @@ English | [中文](README.zh-CN.md)
 | `Esc` / red ✕ / right click | Cancel |
 
 The chosen mode is remembered in `localStorage` under `dsh-screenshot.mode`.
+
+## Desktop build vs browser build
+
+The selection step is identical on both: the same native form covers the whole virtual screen,
+with the same grips and annotations. Only "does DSH step aside" differs:
+
+- **Desktop build** (the page runs on `dsh-app://app`): both modes are offered. Hiding finds
+  the DSH browser window by its title and puts it back afterwards.
+- **Browser build** (the web build opened over `http://`): a single "Frame part of the screen"
+  option, and the browser stays in the picture. **Hiding is not offered on purpose** — over
+  http there is no dependable "this is the DSH window" test, and a title match could park a
+  different window you are using. Move or shrink the browser first, then start the capture.
+
+The test is exactly `location.protocol === 'dsh-app:'` — nothing is guessed.
+
+## Using it from the browser build
+
+The host half is plain `webServer` + `connection`, so the web profile takes the same bundle:
+add `"dsh-screenshot": "link:..."` to `<profile>/package.json`, list `"dsh-screenshot"` in
+`dsh.profile.bundles`, junction `node_modules/dsh-screenshot`, restart. The capture runs in the
+DSH host process on the machine, so a browser on another device can drive it — the pixels come
+from the host's desktop, not from the client.
 
 ## Why the selection is native, not in the page
 

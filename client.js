@@ -32,6 +32,17 @@ window.__ModuleLoader__.load({
     const SHEET_CLOSE_TIMEOUT_MS = 1500
     const SHEET_PAINT_MS = 120
 
+    /**
+     * The desktop shell serves the page from dsh-app://app; a plain browser (the
+     * web build, or the same build opened by hand) is on http(s). Only the shell
+     * can be hidden and brought back, so the hide option is offered there alone:
+     * in a browser the title match would hide whatever other window shares the
+     * page title instead.
+     */
+    function inDesktopShell() {
+      return typeof location !== 'undefined' && location.protocol === 'dsh-app:'
+    }
+
     const zh = {
       command: '截图',
       commandHint: '全屏框选任意区域，可标注，把图片放进输入框',
@@ -41,6 +52,8 @@ window.__ModuleLoader__.load({
       hideDetail: '截到后台的其它窗口',
       keepLabel: '保持窗口可见',
       keepDetail: '把 DSH 自己也留在画面里',
+      webLabel: '开始框选屏幕',
+      webDetail: '浏览器会留在画面里；要截别的窗口，先把浏览器挪开或缩到一边',
       searchPlaceholder: '选择截图方式',
       empty: '没有可选方式',
       noResults: '没有匹配的方式',
@@ -58,6 +71,8 @@ window.__ModuleLoader__.load({
       hideDetail: 'Captures whatever is behind DSH',
       keepLabel: 'Keep this window visible',
       keepDetail: 'Leaves DSH itself in the picture',
+      webLabel: 'Frame part of the screen',
+      webDetail: 'The browser stays in the picture; move or shrink it first to reach other windows',
       searchPlaceholder: 'Pick a capture mode',
       empty: 'No capture modes',
       noResults: 'No matching mode',
@@ -297,10 +312,13 @@ window.__ModuleLoader__.load({
                     noResults: t('noResults'),
                   }),
                   // The shell calls .then on this, so it has to be a promise.
-                  options: async () => [
-                    { id: 'hide', label: t('hideLabel'), detail: t('hideDetail'), active: mode === 'hide' },
-                    { id: 'keep', label: t('keepLabel'), detail: t('keepDetail'), active: mode === 'keep' },
-                  ],
+                  options: async () =>
+                    inDesktopShell()
+                      ? [
+                          { id: 'hide', label: t('hideLabel'), detail: t('hideDetail'), active: mode === 'hide' },
+                          { id: 'keep', label: t('keepLabel'), detail: t('keepDetail'), active: mode === 'keep' },
+                        ]
+                      : [{ id: 'keep', label: t('webLabel'), detail: t('webDetail'), active: true }],
                   // Must not await the capture: the shell closes the sheet only
                   // after this returns, and the shot has to happen with the
                   // sheet already gone.
