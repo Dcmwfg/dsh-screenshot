@@ -15,10 +15,9 @@ English | [中文](README.zh-CN.md)
 
 | Action | Result |
 | --- | --- |
-| Composer `+` → **Screenshot** | Two modes, both builds (see below) |
-| **Hide this window, then capture** (desktop build) | DSH is hidden first, so the shot shows what is behind it |
-| **Step this window aside** (web build) | Whatever window holds the page gives way — a shell hides, a browser minimises — and comes back afterwards |
-| **Keep this window visible** | The client stays on screen and can be part of the crop |
+| Composer `+` → **Screenshot** | The same two modes on every build |
+| **Hide the window, then capture** | The window gives way — a shell hides, a browser minimises — and comes back afterwards |
+| **Keep the window in the shot** | The client stays on screen and can be part of the crop |
 | Drag on the frozen desktop | Selection rectangle, over the **whole** virtual screen at 1:1 |
 | Drag a white grip | Resize the selection (8 grips, min 6×6) |
 | Drag anywhere inside the frame (or the inner border strip) | Move the selection |
@@ -192,7 +191,7 @@ between releases.
 
 The host's `PopupSelectController` sets `submitting`, awaits `onSelect`, and only then
 closes the sheet. So `onSelect` here returns immediately and the capture is fired from a
-poll that waits for the sheet to leave the DOM — otherwise "keep this window visible" would
+poll that waits for the sheet to leave the DOM — otherwise "keep the window in the shot" would
 freeze the picker panel into the frame. The poll gives up after 1.5 s and shoots anyway.
 
 ## Self-test
@@ -241,7 +240,7 @@ or press `Esc`; a cancel answers `{"ok":false,"reason":"cancelled"}`.
 - Annotations are rectangles in one colour (red); `Ctrl+Z` undoes the last mark only. Marking
   costs a modifier because the plain body drag belongs to moving the frame.
 - The frozen frame is a snapshot: anything that changes behind the selector is not reflected.
-- "Keep this window visible" captures whatever is on screen, so bring DSH to the front first
+- "Keep the window in the shot" captures whatever is on screen, so bring DSH to the front first
   if you want to include DSH itself.
 
 ## License

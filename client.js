@@ -48,14 +48,10 @@ window.__ModuleLoader__.load({
       commandHint: '全屏框选任意区域，可标注，把图片放进输入框',
       failed: '截图失败',
       restoreFailed: '窗口没能自动恢复，请点一下任务栏里的 DSH',
-      hideLabel: '隐藏本窗口后截图',
-      hideDetail: '截到后台的其它窗口',
-      keepLabel: '保持窗口可见',
-      keepDetail: '把 DSH 自己也留在画面里',
-      webHideLabel: '窗口先让开再截图',
-      webHideDetail: '外壳窗口隐藏，浏览器最小化，截完自动恢复',
-      webKeepLabel: '保持窗口可见',
-      webKeepDetail: '把承载这个页面的窗口一起框进画面',
+      hideLabel: '隐藏窗口截图',
+      hideDetail: '窗口先让开，截到它后面的东西，截完自动恢复',
+      keepLabel: '保留窗口截图',
+      keepDetail: '把承载这个页面的窗口一起框进画面',
       hideMissed: '没认出承载页面的窗口，它没让开，画面里会带着它',
       searchPlaceholder: '选择截图方式',
       empty: '没有可选方式',
@@ -70,14 +66,10 @@ window.__ModuleLoader__.load({
       commandHint: 'Frame any part of the screen, annotate it, and put the image in the composer',
       failed: 'Screenshot failed',
       restoreFailed: 'The window did not come back; click DSH on the taskbar.',
-      hideLabel: 'Hide this window, then capture',
-      hideDetail: 'Captures whatever is behind DSH',
-      keepLabel: 'Keep this window visible',
-      keepDetail: 'Leaves DSH itself in the picture',
-      webHideLabel: 'Step this window aside',
-      webHideDetail: 'A shell window hides, a browser minimises; it comes back afterwards',
-      webKeepLabel: 'Keep the window visible',
-      webKeepDetail: 'Leaves the window showing this page in the picture',
+      hideLabel: 'Hide the window, then capture',
+      hideDetail: 'The window steps aside and comes back afterwards',
+      keepLabel: 'Keep the window in the shot',
+      keepDetail: 'Leaves the window showing this page in the picture',
       hideMissed: 'The window showing this page was not recognised, so it stayed in the picture',
       searchPlaceholder: 'Pick a capture mode',
       empty: 'No capture modes',
@@ -328,16 +320,13 @@ window.__ModuleLoader__.load({
                     noResults: t('noResults'),
                   }),
                   // The shell calls .then on this, so it has to be a promise.
-                  options: async () =>
-                    inDesktopShell()
-                      ? [
-                          { id: 'hide', label: t('hideLabel'), detail: t('hideDetail'), active: mode === 'hide' },
-                          { id: 'keep', label: t('keepLabel'), detail: t('keepDetail'), active: mode === 'keep' },
-                        ]
-                      : [
-                          { id: 'hide', label: t('webHideLabel'), detail: t('webHideDetail'), active: mode === 'hide' },
-                          { id: 'keep', label: t('webKeepLabel'), detail: t('webKeepDetail'), active: mode === 'keep' },
-                        ],
+                  // Both hosts offer the same two rows: whether the window is a
+                  // native shell or a browser tab changes only how it steps
+                  // aside, which the driver decides per window.
+                  options: async () => [
+                    { id: 'hide', label: t('hideLabel'), detail: t('hideDetail'), active: mode === 'hide' },
+                    { id: 'keep', label: t('keepLabel'), detail: t('keepDetail'), active: mode === 'keep' },
+                  ],
                   // Must not await the capture: the shell closes the sheet only
                   // after this returns, and the shot has to happen with the
                   // sheet already gone.
