@@ -205,10 +205,24 @@ export function apply(ctx) {
           const recordFile = join(tmpdir(), '$dsh-shot-' + tag + '.parked')
           const title = typeof body.title === 'string' ? body.title.slice(0, TITLE_LIMIT_CHARS) : ''
           const park = body.hide !== false
-          // 'title' = the desktop shell, whose page origin names one window.
-          // 'browser' = the browser build, where only a known browser process is
-          // ever touched and minimizing keeps a taskbar button to come back to.
-          const browserTarget = body.target === 'browser'
+          // Who may step aside, and how, depends on what is showing the page:
+          //   title    - a shell that serves the page under dsh-app://, where the
+          //              caption names the window outright; hide it, exactly as
+          //              the desktop build always has.
+          //   shell    - a launcher that hosts the page in its own native window
+          //              (DSH-X's Tauri window); its caption is the shell's own,
+          //              so it is identified by its webview child instead, and it
+          //              is hidden the same way - one code path for every shell.
+          //   browser  - a real browser tab; only a known browser process is ever
+          //              touched and minimizing keeps a taskbar button to come
+          //              back to.
+          //   auto     - let the driver decide from the window itself: a shell
+          //              that owns the window is hidden, a browser tab is
+          //              minimized. This is what the web build sends, because a
+          //              page on http cannot tell which shell (if any) holds it.
+          const kind = typeof body.host === 'string' ? body.host.trim().toLowerCase() : ''
+          const hostKind =
+            kind === 'browser' || kind === 'shell' || kind === 'auto' ? kind : 'title'
 
           try {
             const args = [
@@ -217,8 +231,10 @@ export function apply(ctx) {
               '-Record', recordFile,
               '-TimeoutSeconds', String(CAPTURE_BUDGET_SECONDS),
               '-HideWindow', park ? '1' : '0',
-              '-TargetKind', browserTarget ? 'browser' : 'title',
-              '-HideKind', browserTarget ? 'minimize' : 'hide',
+              '-TargetKind', hostKind,
+              // Auto asks the driver to pick, which it does per window: only a
+              // browser is minimized, every shell is hidden.
+              '-HideKind', hostKind === 'browser' ? 'minimize' : 'hide',
               '-SourceDir', SCRIPTS,
             ]
             if (title !== '') args.push('-TitleFragment', title)
@@ -266,6 +282,10 @@ export function apply(ctx) {
               width: answer.width,
               height: answer.height,
               hidden: answer.hidden === true,
+              // "hide" for a shell that owns its window, "minimize" for a
+              // browser tab, "" when nothing was touched. The client only needs
+              // it to tell a missed window apart when it asked for one.
+              mode: typeof answer.mode === 'string' ? answer.mode : '',
               restored: true,
               bytes: bytes.length,
             })

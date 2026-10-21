@@ -52,11 +52,11 @@ window.__ModuleLoader__.load({
       hideDetail: '截到后台的其它窗口',
       keepLabel: '保持窗口可见',
       keepDetail: '把 DSH 自己也留在画面里',
-      webHideLabel: '最小化浏览器后截图',
-      webHideDetail: '截完自动恢复；浏览器要跑在这台机器上',
-      webKeepLabel: '保持浏览器可见',
-      webKeepDetail: '把浏览器一起框进画面',
-      hideMissed: '没找到浏览器窗口，没有最小化，画面里会带着浏览器',
+      webHideLabel: '窗口先让开再截图',
+      webHideDetail: '外壳窗口隐藏，浏览器最小化，截完自动恢复',
+      webKeepLabel: '保持窗口可见',
+      webKeepDetail: '把承载这个页面的窗口一起框进画面',
+      hideMissed: '没认出承载页面的窗口，它没让开，画面里会带着它',
       searchPlaceholder: '选择截图方式',
       empty: '没有可选方式',
       noResults: '没有匹配的方式',
@@ -74,11 +74,11 @@ window.__ModuleLoader__.load({
       hideDetail: 'Captures whatever is behind DSH',
       keepLabel: 'Keep this window visible',
       keepDetail: 'Leaves DSH itself in the picture',
-      webHideLabel: 'Minimise the browser, then capture',
-      webHideDetail: 'Restores itself afterwards; the browser must run on this machine',
-      webKeepLabel: 'Keep the browser visible',
-      webKeepDetail: 'Leaves the browser in the picture',
-      hideMissed: 'No browser window found, so nothing was minimised; the browser is in the picture',
+      webHideLabel: 'Step this window aside',
+      webHideDetail: 'A shell window hides, a browser minimises; it comes back afterwards',
+      webKeepLabel: 'Keep the window visible',
+      webKeepDetail: 'Leaves the window showing this page in the picture',
+      hideMissed: 'The window showing this page was not recognised, so it stayed in the picture',
       searchPlaceholder: 'Pick a capture mode',
       empty: 'No capture modes',
       noResults: 'No matching mode',
@@ -211,9 +211,12 @@ window.__ModuleLoader__.load({
         body: JSON.stringify({
           title: document.title,
           hide: hideWindow !== false,
-          // The desktop shell can name its own window; a browser cannot, so the
-          // host falls back to "the foreground window, if it is a browser".
-          target: inDesktopShell() ? 'title' : 'browser',
+          // The desktop build serves the page from dsh-app://, where the caption
+          // names its window outright. Any other host - a launcher wrapping the
+          // page in its own native window, or a plain browser tab - is not
+          // identifiable from the page, so the driver works it out from the
+          // window itself: hide a shell, minimize a browser.
+          host: inDesktopShell() ? 'title' : 'auto',
         }),
       })
       const payload = await response.json().catch(() => null)

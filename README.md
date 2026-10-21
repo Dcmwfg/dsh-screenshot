@@ -17,7 +17,7 @@ English | [中文](README.zh-CN.md)
 | --- | --- |
 | Composer `+` → **Screenshot** | Two modes, both builds (see below) |
 | **Hide this window, then capture** (desktop build) | DSH is hidden first, so the shot shows what is behind it |
-| **Minimise the browser, then capture** (browser build) | The browser drops to the taskbar and comes back afterwards |
+| **Step this window aside** (web build) | Whatever window holds the page gives way — a shell hides, a browser minimises — and comes back afterwards |
 | **Keep this window visible** | The client stays on screen and can be part of the crop |
 | Drag on the frozen desktop | Selection rectangle, over the **whole** virtual screen at 1:1 |
 | Drag a white grip | Resize the selection (8 grips, min 6×6) |
@@ -29,31 +29,44 @@ English | [中文](README.zh-CN.md)
 
 The chosen mode is remembered in `localStorage` under `dsh-screenshot.mode`.
 
-## Desktop build vs browser build
+## Which window gives way
 
-The selection step is identical on both: the same native form covers the whole virtual screen,
-with the same grips and annotations. Only "how does the client get out of the way" differs, and
-the reason is that the two builds can name their own window very differently:
+The selection step is always the same: one native form covers the whole virtual screen, with the
+same grips and annotations. Only "how does the client get out of the way" differs, because three
+kinds of host can be showing this page and they can name their own window very differently:
 
-- **Desktop build** (the page runs on `dsh-app://app`): the page origin names exactly one
-  window, so hiding may fall back to the title match and then the foreground window.
-- **Browser build** (the web build opened over `http://`): a page title proves nothing — a
-  dozen tabs can share one — so the host never touches a window on the strength of a caption
-  alone. It looks for a **known browser process** (`chrome`, `msedge`, `firefox`, `brave`,
-  `opera`, `vivaldi`, …) whose caption matches the page title, and only then falls back to
-  "the foreground window, if that window belongs to a browser". Anything else is left alone,
-  and the capture proceeds with the screen as it stands.
+| Host | How it is recognised | How it gives way |
+| --- | --- | --- |
+| Desktop build (page on `dsh-app://app`) | the page origin | **hide** |
+| Launcher wrapping the page in its own native window (e.g. DSH-X, a Tauri shell) | its process is a shell **and** it owns a `WRY_WEBVIEW` child | **hide** |
+| A real browser tab | its process is on the browser list | **minimise** |
 
-That last point is a deliberate trade: a picture that happens to include the browser beats
-minimising a window we could not identify. When it happens the client logs one warning and the
-shot is still delivered.
+Both shells are hidden the same way, so a launcher needs no second code path — the only thing
+that changes is how the window is *found*. A browser is minimised rather than hidden: a minimised
+window keeps its taskbar button, the restore is the ordinary `SW_RESTORE`, and it lands back
+where the user left it.
 
-Minimising rather than hiding is also deliberate in the browser build: a minimised window
-keeps its taskbar button, so the restore is the ordinary `SW_RESTORE` and the window lands
-back where the user left it. Success is checked per mode — hidden must report
-`IsWindowVisible === false`, minimised must report `IsIconic === true`.
+Recognition never rests on a caption alone:
 
-The build test is exactly `location.protocol === 'dsh-app:'` — nothing is guessed.
+- the click that starts a capture lands in the window showing the page, so **the foreground
+  window is the first fact** — if it is a shell or a browser, that settles it;
+- then the page title is matched against a caption (four characters or more, consoles excluded);
+- then any **known browser process** (`chrome`, `msedge`, `firefox`, `brave`, `opera`,
+  `vivaldi`, …), because a browser is the one host a native shell cannot be;
+- only when nothing else is named, the **single** visible shell window is used — that is how a
+  launcher is found even though its caption is its own ("DSH-X") and not the page's.
+
+Anything else is left alone and the capture proceeds with the screen as it stands. That is a
+deliberate trade: a picture that happens to include the client beats moving a window we could not
+identify. When it happens the client logs one warning and the shot is still delivered.
+
+Success is checked per mode — hidden must report `IsWindowVisible === false`, minimised must
+report `IsIconic === true` — and the answer says which happened (`mode: "hide" | "minimize"`)
+plus the handle it touched (`window`).
+
+The desktop build is the one host the page can name outright, so the client sends
+`host: "title"` there and `host: "auto"` everywhere else; `auto` resolves from the window
+itself.
 
 ## Using it from the browser build
 

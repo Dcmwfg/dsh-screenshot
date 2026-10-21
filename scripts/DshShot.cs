@@ -39,6 +39,10 @@ public static class DshShot
     private static extern bool IsIconic(IntPtr hWnd);
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+    [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr hWnd, EnumWindowsProc callback, IntPtr lParam);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder text, int count);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -62,6 +66,18 @@ public static class DshShot
         "qqbrowser", "360se", "360chrome", "sogouexplorer", "ucbrowser"
     };
 
+    /// <summary>
+    /// A launcher shell that hosts the page in its own native window: DSH-X
+    /// runs a Tauri/wry window with a WebView2 child, so the page lives inside
+    /// a process that is neither the desktop build nor a browser. The name
+    /// alone proves nothing (any program can be called "dsh"), so a window is
+    /// only accepted when it also owns a child of class WRY_WEBVIEW - that is
+    /// wry's own webview host and it does not appear by accident.
+    /// </summary>
+    private static readonly string[] ShellProcesses = { "dsh", "dsh-x", "dshx" };
+
+    private const string WryWebviewClass = "WRY_WEBVIEW";
+
     /// <summary>Outcome of one capture attempt; serialized by RunJson.</summary>
     public sealed class Outcome
     {
@@ -73,6 +89,14 @@ public static class DshShot
         public int height;
         /// <summary>True only when a window was actually stepped aside.</summary>
         public bool hidden;
+        /// <summary>
+        /// How the window stepped aside: "hide", "minimize", or "" when no
+        /// window was touched. Reported so a caller can tell a hidden shell from
+        /// a minimized browser without watching the desktop.
+        /// </summary>
+        public string mode = "";
+        /// <summary>Handle of the window that stepped aside, or 0.</summary>
+        public long window;
     }
 
     /// <summary>Run one capture and answer a single-line JSON document.</summary>
@@ -87,6 +111,8 @@ public static class DshShot
             + ",\"width\":" + outcome.width
             + ",\"height\":" + outcome.height
             + ",\"hidden\":" + (outcome.hidden ? "true" : "false")
+            + ",\"mode\":" + Quote(outcome.mode)
+            + ",\"window\":" + outcome.window
             + "}";
     }
 
@@ -96,56 +122,97 @@ public static class DshShot
         try { SetProcessDpiAwarenessContext(new IntPtr(-4)); }
         catch { try { SetProcessDPIAware(); } catch { } }
 
-        // The window to hide is the page's own browser window. The caller passes
-        // its document title because the foreground window at spawn time can be a
-        // console that the launcher briefly owned. Without hiding there is no
-        // window to find at all: the frozen frame simply keeps what is on screen.
-        // Two ways to name the window that has to step aside:
-        //   title    - the page's own caption. The desktop shell serves the page
-        //              from dsh-app://app, so that caption names one window.
-        //   browser  - the browser build has no such guarantee, so only a window
-        //              whose process is a known browser may be touched: first a
-        //              caption match inside that allowlist, then the foreground
-        //              window if it is one. Anything else is left alone and the
-        //              capture proceeds with the screen as it stands - a picture
-        //              that happens to contain the browser beats moving a window
-        //              we could not identify.
-        bool browserOnly = string.Equals(targetKind, "browser", StringComparison.OrdinalIgnoreCase);
-        bool minimize = string.Equals(hideKind, "minimize", StringComparison.OrdinalIgnoreCase);
+        // Work out which window has to step aside, then step it aside the way
+        // that kind of window wants to be stepped aside. There are two kinds of
+        // window showing this page:
+        //
+        //   shell   - the window belongs to the app: the desktop build serves
+        //             the page from dsh-app://app, and DSH-X hosts it in its own
+        //             Tauri window (identified by the WRY_WEBVIEW child, since
+        //             its caption is the launcher's own - "DSH-X"). Both are
+        //             handled exactly alike: hide the window, which is what the
+        //             desktop build has always done.
+        //   browser - a real browser tab. Nothing about the page names its
+        //             window, so only a process on the browser list is ever
+        //             touched, and it is minimized rather than hidden so the
+        //             taskbar keeps a button to come back to.
+        //
+        // The click that starts a capture lands in the window showing the page,
+        // so at this moment that window owns the foreground. That is the
+        // strongest fact available and it settles the case without any caption.
+        // The document title is only the fallback, because the foreground at
+        // spawn time can be a console the launcher briefly owned.
+        bool wantMinimize = string.Equals(hideKind, "minimize", StringComparison.OrdinalIgnoreCase);
+        string overrideKind = targetKind == null ? "" : targetKind.Trim().ToLowerInvariant();
         IntPtr target = IntPtr.Zero;
         if (hideWindow)
         {
-            if (browserOnly)
+            IntPtr foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
+            bool foregroundUsable = foreground != IntPtr.Zero && IsWindow(foreground);
+
+            if (overrideKind == "shell")
             {
-                // Best case: the window the user is actually looking at is a
-                // browser AND its caption is this page. That is exactly "the
-                // window showing the client", so it wins outright and a second
-                // browser window can never be picked by accident.
-                IntPtr front = FindForegroundBrowser();
-                if (front != IntPtr.Zero && CaptionMatches(front, titleFragment)) target = front;
-                // Otherwise fall back to a caption match anywhere on the browser
-                // list, then to any foreground browser at all (a generic caption
-                // still identifies the browser the user clicked in).
+                if (foregroundUsable && IsShellWindow(foreground)) target = foreground;
+                if (target == IntPtr.Zero) target = FindShellWindow();
+            }
+            else if (overrideKind == "browser")
+            {
+                if (foregroundUsable && IsBrowserWindow(foreground)) target = foreground;
                 if (target == IntPtr.Zero) target = FindBrowserByTitle(titleFragment);
-                if (target == IntPtr.Zero) target = front;
-                if (target == IntPtr.Zero) outcome.message = "no browser window to step aside";
+            }
+            else if (overrideKind == "title")
+            {
+                target = FindByTitle(titleFragment);
+                if (target == IntPtr.Zero && foregroundUsable) target = foreground;
             }
             else
             {
-                target = FindByTitle(titleFragment);
-                if (target == IntPtr.Zero) target = GetAncestor(GetForegroundWindow(), GA_ROOT);
-                if (target == IntPtr.Zero || !IsWindow(target))
+                // Auto: believe what the user is actually clicking in first. The
+                // click that opens this capture lands in the window showing the
+                // page, so that window holds the foreground right now.
+                if (foregroundUsable && IsShellWindow(foreground)) target = foreground;
+                else if (foregroundUsable && IsBrowserWindow(foreground)) target = foreground;
+
+                // Foreground is something else (a console the launcher briefly
+                // owned, the desktop). A caption match is the next best evidence,
+                // then any browser: a browser is the one host this window could
+                // not have been, so identifying one is stronger than guessing a
+                // shell. Only when no host at all can be named is the single
+                // visible shell window used - which is how the launcher's own
+                // window is found even though its caption is the launcher's.
+                if (target == IntPtr.Zero) target = FindByTitle(titleFragment);
+                if (target == IntPtr.Zero)
                 {
-                    outcome.reason = "failed";
-                    outcome.message = "no window to hide";
-                    return outcome;
+                    IntPtr front = FindForegroundBrowser();
+                    if (front != IntPtr.Zero && CaptionMatches(front, titleFragment)) target = front;
+                    if (target == IntPtr.Zero) target = FindBrowserByTitle(titleFragment);
+                    if (target == IntPtr.Zero) target = front;
+                }
+                if (target == IntPtr.Zero) target = FindShellWindow();
+            }
+
+            if (target == IntPtr.Zero || !IsWindow(target))
+            {
+                // Nothing identifiable. Leave every window alone and capture the
+                // screen as it stands: a picture that happens to contain the page
+                // beats moving a window we could not name.
+                outcome.message = "no window to step aside";
+            }
+            else
+            {
+                // Auto mode picks the step-aside by what the window actually is:
+                // a shell that owns its window gets hidden, a browser tab gets
+                // minimized so the taskbar keeps a button to come back to.
+                if (overrideKind == "" || overrideKind == "auto") wantMinimize = IsBrowserWindow(target);
+                outcome.window = target.ToInt64();
+                outcome.mode = wantMinimize ? "minimize" : "hide";
+                if (targetFile != null && targetFile.Length > 0)
+                {
+                    try { File.WriteAllText(targetFile, target.ToInt64().ToString()); } catch { }
                 }
             }
-            if (target != IntPtr.Zero && targetFile != null && targetFile.Length > 0)
-            {
-                try { File.WriteAllText(targetFile, target.ToInt64().ToString()); } catch { }
-            }
         }
+        bool minimize = wantMinimize;
 
         try
         {
@@ -366,6 +433,56 @@ public static class DshShot
             if (string.Equals(processName, browser, StringComparison.OrdinalIgnoreCase)) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// True when this window is a launcher shell hosting the page. In that
+    /// build the caption is the shell's own ("DSH-X", the launch profile, the
+    /// tab title), never this document's title, so a caption match cannot be
+    /// used here - the webview child is the proof instead.
+    /// </summary>
+    private static bool IsShellWindow(IntPtr hWnd)
+    {
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        string processName = "";
+        try { processName = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; }
+        catch { return false; }
+
+        bool nameOk = false;
+        foreach (string shell in ShellProcesses)
+        {
+            if (string.Equals(processName, shell, StringComparison.OrdinalIgnoreCase)) { nameOk = true; break; }
+        }
+        if (!nameOk) return false;
+
+        bool hasWebview = false;
+        EnumChildWindows(hWnd, delegate(IntPtr child, IntPtr lParam)
+        {
+            System.Text.StringBuilder name = new System.Text.StringBuilder(64);
+            GetClassName(child, name, name.Capacity);
+            if (string.Equals(name.ToString(), WryWebviewClass, StringComparison.Ordinal)) { hasWebview = true; return false; }
+            return true;
+        }, IntPtr.Zero);
+        return hasWebview;
+    }
+
+    /// <summary>Fallback for the shell build: the one visible shell window, if there is exactly one.</summary>
+    private static IntPtr FindShellWindow()
+    {
+        IntPtr found = IntPtr.Zero;
+        int count = 0;
+
+        EnumWindows(delegate(IntPtr hWnd, IntPtr lParam)
+        {
+            if (!IsWindowVisible(hWnd)) return true;
+            if (!IsShellWindow(hWnd)) return true;
+            count++;
+            found = hWnd;
+            return true;
+        }, IntPtr.Zero);
+
+        return count == 1 ? found : IntPtr.Zero;
     }
 
     private static Rectangle ParseRectangle(string spec)
