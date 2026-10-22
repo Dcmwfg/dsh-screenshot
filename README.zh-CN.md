@@ -6,8 +6,14 @@
 你在真屏幕上拖出想要的区域、随手标注，按绿勾 —— PNG 就落进输入框，作为
 **待发送的附件**，跟下一条消息一起发出去。
 
-Windows 与 macOS 都支持。那个「原生选区」在两边不是同一个东西：Windows 是插件自己的
-WinForms 窗体，macOS 直接开系统自带的 `screencapture` 框选。
+这个仓库出**两个包**，一个平台一个 —— 两边的原生半没有一行共用代码：
+
+| 包 | 平台 | 选区是谁 | 路由前缀 |
+| --- | --- | --- | --- |
+| [`packages/windows`](packages/windows) — `dsh-screenshot` | Windows 10/11 | 插件自己的 WinForms 窗体，盖住整个虚拟屏 | `/dsh-shot/*` |
+| [`packages/macos`](packages/macos) — `dsh-screenshot-mac` | macOS | 系统自带的 `screencapture -i` 选区 | `/dsh-shot-mac/*` |
+
+装机器面前那一个就行。两个包各自声明了 `os`，装错了会自己说一声，而不是闷着不干活。
 
 [English](README.md) | 中文
 
@@ -28,7 +34,13 @@ WinForms 窗体，macOS 直接开系统自带的 `screencapture` 框选。
 | `Enter` / 绿勾 | 确认，把 PNG 放进输入框 |
 | `Esc` / 红叉 / 右键 | 取消 |
 
-选的模式记在 `localStorage` 的 `dsh-screenshot.mode` 里。
+选的模式记在 `localStorage` 里（Windows 是 `dsh-screenshot.mode`，macOS 是
+`dsh-screenshot-mac.mode`）。
+
+从「在冻结的桌面上拖」到「`Ctrl+Z` `撤销最后一笔`」这几行，都是 **Windows** 选区自己的行为。
+macOS 上选区完全归苹果那套 UI —— 准星、放大镜、实时像素读数、空格切整窗、`Esc` 取消 ——
+插件只负责把截好的那一块拿走、把应用放回来。这是有意的：用 AppKit 重画一遍，只会做出一个
+更差的复制品。
 
 ## 哪个窗口让开
 
@@ -90,9 +102,10 @@ Windows 侧能托着页面的宿主有三种：
 
 ## 运行条件
 
-- **Windows 10/11 或 macOS。** 两边各有一个原生驱动，做的事一样、走的路不同：
-  Windows 用 WinForms 窗体盖住整个虚拟屏（`scripts\DshShot.cs` + `scripts\snip.ps1`），
-  macOS 直接开系统自带的 `screencapture -i` 框选（`scripts\snip-mac.sh`）。Linux 没有路径。
+- **Windows 10/11 或 macOS。** 两边各打一个包，做的事一样、走的路不同：
+  `packages/windows` 用 WinForms 窗体盖住整个虚拟屏（`scripts\DshShot.cs` + `scripts\snip.ps1`），
+  `packages/macos` 用 bash 直接开系统自带的 `screencapture -i` 框选（`scripts\snip-mac.sh`）。
+  Linux 没有路径。
 - 一个把 `commandUi` 服务与 `webServer` + `connection` 宿主服务暴露出来的 DSH 桌面版
   （发行版桌面 profile 就是）。
 - Windows：PowerShell 5.1，系统自带。别的都不用装 —— C# 选区窗体由 `Add-Type` 现场编译。
@@ -101,36 +114,48 @@ Windows 侧能托着页面的宿主有三种：
 
 ## 安装
 
-插件就是一个普通的 DSH bundle：`package.json` + 宿主半（`index.js`）+ 客户端半
-（`client.js`）+ `cordis.patch.yml` + `scripts/` 里的原生选区。
+每个包都是一个普通的 DSH bundle：`package.json` + 宿主半（`index.js`）+ 客户端半
+（`client.js`）+ `cordis.patch.yml` + `scripts/` 里的原生驱动。仓库根目录只是 workspace
+容器，**别把根目录本身链进 profile**。
 
-1. 克隆到 profile 之外的地方：
+克隆一次，然后挑机器对应的那个包：
 
-   ```powershell
-   git clone https://github.com/Dcmwfg/dsh-screenshot.git E:\dsh-plugins\dsh-screenshot
-   ```
+```powershell
+git clone https://github.com/Dcmwfg/dsh-screenshot.git E:\dsh-plugins\dsh-screenshot
+```
 
-2. 在 `<profile>/package.json`（Windows 上是
-   `%USERPROFILE%\.dsh\profiles\desktop\package.json`）加依赖：
+| 机器 | 包目录 | bundle 名 |
+| --- | --- | --- |
+| Windows 10/11 | `packages/windows` | `dsh-screenshot` |
+| macOS | `packages/macos` | `dsh-screenshot-mac` |
+
+下面以 Windows 版为例（`<profile>` 是 profile 目录，比如
+`%USERPROFILE%\.dsh\profiles\desktop`）：
+
+1. 加依赖 —— 注意路径要指到包，不是仓库根：
 
    ```json
-   "dependencies": { "dsh-screenshot": "link:E:/dsh-plugins/dsh-screenshot" }
+   "dependencies": { "dsh-screenshot": "link:E:/dsh-plugins/dsh-screenshot/packages/windows" }
    ```
 
-3. 同一个文件里加 bundle 名：
+2. 同一个文件里加 bundle 名：
 
    ```json
    "dsh": { "profile": { "bundles": ["...", "dsh-screenshot"] } }
    ```
 
-4. 链进 profile 的 `node_modules`：
+3. 链进 profile 的 `node_modules`：
 
    ```powershell
    New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-screenshot" `
-     -Target "E:\dsh-plugins\dsh-screenshot"
+     -Target "E:\dsh-plugins\dsh-screenshot\packages\windows"
    ```
 
-5. **重启 DSH。** 新 bundle 在启动时组好；之后再改文件要等下一次启动。
+4. **重启 DSH。** 新 bundle 在启动时组好；之后再改文件要等下一次启动。
+
+macOS 换成 `packages/macos`、名字 `dsh-screenshot-mac`、profile 在 `~/.dsh/profiles/desktop`
+（或 `web`）。形状完全一样：`link:<checkout>/packages/macos`，`bundles` 里写
+`"dsh-screenshot-mac"`。
 
 用 junction 而不是拷贝，意思是改完源码重启就生效。
 
@@ -150,9 +175,10 @@ Windows 侧能托着页面的宿主有三种：
 
 | 半边 | 文件 | 干什么 |
 | --- | --- | --- |
-| 宿主 | `index.js` | `POST /dsh-shot/shot` → 按平台起 PowerShell 跑 `scripts/snip.ps1`、或起 bash 跑 `scripts/snip-mac.sh`，回一张成品 PNG 的 data URL。`GET /dsh-shot/ping` 是存活探针。 |
-| 客户端 | `client.js` | 注册 `shot` 命令与两种模式，等选择面板消失，发请求，把回来的 PNG 放进输入框。 |
-| 原生 | `scripts/snip.ps1` + `scripts/DshShot.cs` | 藏窗口（可选）→ 拷贝虚拟屏 → 置顶全屏选区（框选、抓手、平移、标注）→ 合成裁切 → 存 PNG → 恢复。也能用 `-RestoreOnly` 按需恢复。 |
+| 宿主 | `index.js` | `POST /dsh-shot/shot`（Windows）或 `POST /dsh-shot-mac/shot`（macOS）→ 起对应平台的驱动，回一张成品 PNG 的 data URL。配套的 `/ping` 是存活探针，不起子进程。 |
+| 客户端 | `client.js` | 注册 `shot` 命令与两种模式，等选择面板消失，发请求，把回来的 PNG 放进输入框。两边的 `client.js` 几乎一样，只有模块 id、locale 命名空间、路由前缀和存模式的键不同。 |
+| 原生（Windows） | `scripts/snip.ps1` + `scripts/DshShot.cs` | 藏窗口（可选）→ 拷贝虚拟屏 → 置顶全屏选区（框选、抓手、平移、标注）→ 合成裁切 → 存 PNG → 恢复。也能用 `-RestoreOnly` 按需恢复。 |
+| 原生（macOS） | `scripts/snip-mac.sh` | 把前台应用让开（浏览器最小化、别的隐藏）→ `screencapture -i` → 还原 → 回一行 JSON。也能用 `--restore-only` 按需恢复。 |
 
 两条路由都过 `ctx.connection.requestRejection(req)`，继承宿主正常的请求策略，
 不开没鉴权的洞。
@@ -161,12 +187,18 @@ Windows 侧能托着页面的宿主有三种：
 
 | 路由 | 方法 | 请求体 | 回答 |
 | --- | --- | --- | --- |
-| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"restored":true,"bytes":N}` 或 `{"ok":false,"reason":"cancelled"\|"failed","message":"…"}` |
-| `/dsh-shot/ping` | `GET` | — | `{"ok":true,"driver":"…","shell":"…"}` |
+| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean, "host": "title"\|"auto"}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"hidden":bool,"restored":true,"bytes":N}` 或 `{"ok":false,"reason":"cancelled"\|"failed","message":"…"}` |
+| `/dsh-shot/ping` | `GET` | — | `{"ok":true,"platform":"win32","driver":"…","shell":"…"}` |
+| `/dsh-shot-mac/shot` | `POST` | `{"title": string, "hide": boolean, "host": "auto"\|"shell"}` | 同上，另加 `"mode":"hide"\|"minimize"\|""` |
+| `/dsh-shot-mac/ping` | `GET` | — | `{"ok":true,"platform":"darwin","driver":"…","shell":"/bin/bash"}` |
 
-请求体上限 4 KB，选区上限 180 s。`title` 拿去匹配窗口标题找要收起的那个窗口；
-匹配不到就报错，不会去猜「反正最前面那个」。`width`/`height` 是**裁完之后**的尺寸，
+两个包的请求体上限都是 4 KB，选区上限都是 180 s；`width`/`height` 都是**裁完之后**的尺寸，
 不是桌面尺寸。
+
+`title` 拿去匹配窗口标题找要让开的那个窗口 —— **只有 Windows 这么做**，macOS 拿不到别家应用的
+标题。匹配不到就一个窗口都不动、照常截图，并回 `"hidden":false`，让客户端把话说出来。
+`host` 决定怎么让开：`"title"` 表示这页在桌面外壳里，`"auto"` 表示在浏览器里；驱动对外壳做隐藏、
+对浏览器做最小化。
 
 ### 为什么合成一个 `drop` 事件
 
@@ -183,6 +215,7 @@ Windows 侧能托着页面的宿主有三种：
 ## 自检
 
 ```powershell
+cd packages\windows
 node --check index.js
 node --check client.js
 
@@ -207,9 +240,12 @@ powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
 不带 `-AutoSelect` 就是真的弹出选区，阻塞到你确认或按 `Esc`；取消会回
 `{"ok":false,"reason":"cancelled"}`。
 
-macOS 走同一个脚本的另一半：
+macOS 是另一个包，回答的契约一样：
 
 ```bash
+cd packages/macos
+node --check index.js
+node --check client.js
 bash scripts/snip-mac.sh --out /tmp/shot.png --region '200,150,800,500' --hide 0
 bash scripts/snip-mac.sh --restore-only --record /tmp/shot2.parked
 ```
@@ -228,11 +264,13 @@ bash scripts/snip-mac.sh --restore-only --record /tmp/shot2.parked
 | 窗口一直藏着不出来 | 驱动被杀在半路。跑 `scripts\snip.ps1 -RestoreOnly -Record <那个 .parked 文件>`（macOS 是 `bash scripts/snip-mac.sh --restore-only --record <同一文件>`），或点任务栏 / Dock 里的 DSH。 |
 | 截图里带上了选项面板 | 面板还没关完。刷新页面；客户端会先轮询等面板（上限 1.5 s）再拍。 |
 | 选区比屏幕小一圈 | 机器报的是缩放后的虚拟屏，进程不是 DPI 感知的。`DshShot.cs` 在量尺寸之前会调 `SetProcessDpiAwarenessContext`；如果被外层剥掉了，照上面带 `-STA` 跑。 |
+| 控制台里 `this build only runs on macOS` | 装错包了。把 profile 里的 `dsh-screenshot` 换成 `dsh-screenshot-mac`（或反过来）。 |
 | Linux 上没反应 | 正常，插件只有 Windows 和 macOS 两条路径。 |
 
 ## 平台与已知边界
 
-- Windows 10/11 与 macOS；Linux 没有路径。
+- Windows 10/11 与 macOS，是两个独立的包；Linux 没有路径。在 macOS 上装 Windows 包
+  （或反过来）只会打一行警告，不会假装在干活。
 - **macOS 用的是系统那套框选。** 准星、放大镜、逐像素尺寸读数、空格切整窗、Esc 取消都是
   `screencapture` 自带的；移动选区、拖手柄调整大小、`Ctrl` 标注这些是本插件在 Windows 上
   另做的，macOS 侧没有对应物 —— macOS 已经有了更好的，重画一个是退步。

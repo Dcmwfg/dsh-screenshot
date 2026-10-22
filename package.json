@@ -1,65 +1,15 @@
 {
-  "name": "dsh-screenshot",
+  "name": "dsh-screenshot-repo",
   "version": "0.5.1",
   "private": true,
   "type": "module",
-  "description": "Region screenshot for the DeepSeek Harness composer: a native selector (a full-virtual-screen WinForms form on Windows, the system screencapture on macOS) frames the region, and the finished PNG lands in the composer as a pending attachment.",
+  "description": "One plugin, two packages: dsh-screenshot for Windows and dsh-screenshot-mac for macOS.",
   "license": "MIT",
-  "icon": "./icon.svg",
-  "keywords": [
-    "dsh",
-    "deepseek-harness",
-    "dsh-plugin",
-    "screenshot",
-    "capture",
-    "annotation",
-    "windows",
-    "macos"
+  "workspaces": [
+    "packages/*"
   ],
-  "exports": {
-    ".": "./index.js",
-    "./client": "./client.js",
-    "./package.json": "./package.json",
-    "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
-  },
-  "files": [
-    "index.js",
-    "client.js",
-    "cordis.patch.yml",
-    "icon.svg",
-    "scripts/*",
-    "locale/*.json",
-    "README.md",
-    "README.zh-CN.md",
-    "LICENSE"
-  ],
-  "engines": {
-    "node": ">=20"
-  },
-  "os": [
-    "win32",
-    "darwin"
-  ],
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "immediately": true,
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-ui-commands"
-      ]
-    }
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Dcmwfg/dsh-screenshot.git"
-  },
-  "homepage": "https://github.com/Dcmwfg/dsh-screenshot#readme",
-  "bugs": {
-    "url": "https://github.com/Dcmwfg/dsh-screenshot/issues"
   }
 }

@@ -7,8 +7,16 @@ native selector covers the whole desktop, you drag a rectangle over the part you
 wanted, annotate it, press the green tick — and the PNG lands in the composer as a
 **pending attachment**, ready to send with your next message.
 
-Windows and macOS both work. The "native selector" is not the same object on the two: on
-Windows it is this plugin's own WinForms form, on macOS it is the system's `screencapture` UI.
+This repository ships **two packages**, one per platform, because the two native halves share
+no code:
+
+| Package | Platform | Selector | Route prefix |
+| --- | --- | --- | --- |
+| [`packages/windows`](packages/windows) — `dsh-screenshot` | Windows 10/11 | This plugin's own WinForms form over the whole virtual desktop | `/dsh-shot/*` |
+| [`packages/macos`](packages/macos) — `dsh-screenshot-mac` | macOS | The system's own `screencapture -i` selector | `/dsh-shot-mac/*` |
+
+Install only the one that matches the machine in front of you. Each package declares its own
+`os` field, so installing the wrong one reports itself instead of failing quietly.
 
 English | [中文](README.zh-CN.md)
 
@@ -29,7 +37,14 @@ English | [中文](README.zh-CN.md)
 | `Enter` / green ✓ | Accept and drop the PNG in the composer |
 | `Esc` / red ✕ / right click | Cancel |
 
-The chosen mode is remembered in `localStorage` under `dsh-screenshot.mode`.
+The chosen mode is remembered in `localStorage` (`dsh-screenshot.mode` on Windows,
+`dsh-screenshot-mac.mode` on macOS).
+
+Everything from *Drag on the frozen desktop* down to *Ctrl+Z* is the **Windows** selector's own
+behaviour. On macOS the selection belongs entirely to Apple's UI — crosshair, magnifier, live
+pixel readout, space to grab a whole window, `Esc` to cancel — and the plugin only takes the
+finished region and puts the app back. This is deliberate: rebuilding that selector in AppKit
+would only produce a worse copy of it.
 
 ## Which window gives way
 
@@ -118,10 +133,11 @@ the process was killed outright.
 
 ## Requirements
 
-- **Windows 10/11 or macOS.** Each platform has its own native driver, doing the same job
-  different ways: on Windows a WinForms form covers the whole virtual desktop
-  (`scripts\DshShot.cs` + `scripts\snip.ps1`), on macOS the driver simply opens the system's
-  own `screencapture -i` selector (`scripts\snip-mac.sh`). There is no Linux path.
+- **Windows 10/11 or macOS.** Each platform has its own package, doing the same job different
+  ways: `packages/windows` ships a WinForms form that covers the whole virtual desktop
+  (`scripts\DshShot.cs` + `scripts\snip.ps1`), `packages/macos` ships a bash driver that
+  opens the system's own `screencapture -i` selector (`scripts\snip-mac.sh`). There is no
+  Linux path.
 - A DSH desktop build whose composer exposes the `commandUi` service and the
   `webServer` + `connection` host services (the shipping desktop profile does).
 - Windows: PowerShell 5.1, which ships with Windows. Nothing else to install — the C#
@@ -132,37 +148,49 @@ the process was killed outright.
 
 ## Install
 
-The plugin is a plain DSH bundle: `package.json` + host half (`index.js`) + client half
-(`client.js`) + `cordis.patch.yml` + the native selector in `scripts/`.
+Each package is a plain DSH bundle: `package.json` + host half (`index.js`) + client half
+(`client.js`) + `cordis.patch.yml` + the native driver in `scripts/`. The repository root is
+only a workspace container — do not link the root itself into a profile.
 
-1. Clone it somewhere outside the profile:
+Clone once, then pick the package for the machine:
 
-   ```powershell
-   git clone https://github.com/Dcmwfg/dsh-screenshot.git E:\dsh-plugins\dsh-screenshot
-   ```
+```powershell
+git clone https://github.com/Dcmwfg/dsh-screenshot.git E:\dsh-plugins\dsh-screenshot
+```
 
-2. In `<profile>/package.json` (on Windows that is
-   `%USERPROFILE%\.dsh\profiles\desktop\package.json`) add the dependency:
+| Machine | Package | Bundle name |
+| --- | --- | --- |
+| Windows 10/11 | `packages/windows` | `dsh-screenshot` |
+| macOS | `packages/macos` | `dsh-screenshot-mac` |
+
+Then, for the Windows build (`<profile>` is the profile directory, e.g.
+`%USERPROFILE%\.dsh\profiles\desktop`):
+
+1. Add the dependency — note the path ends at the package, not at the repository root:
 
    ```json
-   "dependencies": { "dsh-screenshot": "link:E:/dsh-plugins/dsh-screenshot" }
+   "dependencies": { "dsh-screenshot": "link:E:/dsh-plugins/dsh-screenshot/packages/windows" }
    ```
 
-3. Add the bundle name to the same file:
+2. Add the bundle name to the same file:
 
    ```json
    "dsh": { "profile": { "bundles": ["...", "dsh-screenshot"] } }
    ```
 
-4. Link it into the profile's `node_modules`:
+3. Link it into the profile's `node_modules`:
 
    ```powershell
    New-Item -ItemType Junction -Path "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-screenshot" `
-     -Target "E:\dsh-plugins\dsh-screenshot"
+     -Target "E:\dsh-plugins\dsh-screenshot\packages\windows"
    ```
 
-5. **Restart DSH.** New bundles are composed at boot; editing files afterwards takes effect
+4. **Restart DSH.** New bundles are composed at boot; editing files afterwards takes effect
    on the next start.
+
+On macOS use `packages/macos`, the name `dsh-screenshot-mac`, and the profile under
+`~/.dsh/profiles/desktop` (or `web`). Both files take the same shape —
+`link:<checkout>/packages/macos` and `"dsh-screenshot-mac"` in `bundles`.
 
 A junction (rather than a copy) means edits to the checkout are live after a restart.
 
@@ -185,9 +213,10 @@ Nothing is sent until you submit — the screenshot is an attachment, not a mess
 
 | Half | File | Job |
 | --- | --- | --- |
-| Host | `index.js` | `POST /dsh-shot/shot` → spawns PowerShell with `scripts/snip.ps1` on Windows, bash with `scripts/snip-mac.sh` on macOS, and answers one finished PNG as a data URL. `GET /dsh-shot/ping` is a liveness probe. |
-| Client | `client.js` | Registers the `shot` command with its two modes, waits for the picker sheet to close, fires the capture, and drops the returned PNG into the composer. |
-| Native | `scripts/snip.ps1` + `scripts/DshShot.cs` | Park the window (optional) → blit the virtual screen → topmost full-screen selector (frame, grips, move, annotate) → crop composite → save PNG → restore. Also restores on demand with `-RestoreOnly`. |
+| Host | `index.js` | `POST /dsh-shot/shot` (Windows) or `POST /dsh-shot-mac/shot` (macOS) → spawns the platform driver, and answers one finished PNG as a data URL. The matching `/ping` route is a liveness probe that starts no child process. |
+| Client | `client.js` | Registers the `shot` command with its two modes, waits for the picker sheet to close, fires the capture, and drops the returned PNG into the composer. The two halves are near-identical; only the module id, locale namespace, route prefix and stored-mode key differ. |
+| Native (Windows) | `scripts/snip.ps1` + `scripts/DshShot.cs` | Park the window (optional) → blit the virtual screen → topmost full-screen selector (frame, grips, move, annotate) → crop composite → save PNG → restore. Also restores on demand with `-RestoreOnly`. |
+| Native (macOS) | `scripts/snip-mac.sh` | Step the frontmost app aside (minimize a browser, hide anything else) → `screencapture -i` → put it back → answer one JSON line. Also restores on demand with `--restore-only`. |
 
 Both routes go through `ctx.connection.requestRejection(req)`, so they inherit the host's
 normal request policy instead of opening an unauthenticated hole.
@@ -196,13 +225,20 @@ normal request policy instead of opening an unauthenticated hole.
 
 | Route | Method | Body | Answer |
 | --- | --- | --- | --- |
-| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"restored":true,"bytes":N}` or `{"ok":false,"reason":"cancelled"\|"failed","message":"…"}` |
-| `/dsh-shot/ping` | `GET` | — | `{"ok":true,"driver":"…","shell":"…"}` |
+| `/dsh-shot/shot` | `POST` | `{"title": string, "hide": boolean, "host": "title"\|"auto"}` | `{"ok":true,"dataUrl":"data:image/png;base64,…","width":W,"height":H,"hidden":bool,"restored":true,"bytes":N}` or `{"ok":false,"reason":"cancelled"\|"failed","message":"…"}` |
+| `/dsh-shot/ping` | `GET` | — | `{"ok":true,"platform":"win32","driver":"…","shell":"…"}` |
+| `/dsh-shot-mac/shot` | `POST` | `{"title": string, "hide": boolean, "host": "auto"\|"shell"}` | same shape as above, plus `"mode":"hide"\|"minimize"\|""` |
+| `/dsh-shot-mac/ping` | `GET` | — | `{"ok":true,"platform":"darwin","driver":"…","shell":"/bin/bash"}` |
 
-The body is capped at 4 KB and the selector at 180 s. `title` is matched against window
-captions to find the window to park; when nothing matches, the capture fails instead of
-guessing at whatever happens to be in front. `width`/`height` are the **cropped** size, not
-the desktop size.
+Both builds cap the body at 4 KB and the selector at 180 s, and `width`/`height` are the
+**cropped** size, not the desktop size.
+
+`title` is matched against window captions to find the window to step aside, **on Windows
+only** — macOS is not given other apps' window titles. When nothing matches, nothing is
+touched and the capture goes ahead with the window in frame, reporting `"hidden":false` so the
+client can say so. `host` decides how it steps aside: `"title"` means "this page is in the
+desktop shell", `"auto"` means a browser, and the driver hides a shell but minimizes a
+browser.
 
 ### Why a synthetic `drop` event
 
@@ -222,6 +258,7 @@ freeze the picker panel into the frame. The poll gives up after 1.5 s and shoots
 ## Self-test
 
 ```powershell
+cd packages\windows
 node --check index.js
 node --check client.js
 
@@ -246,9 +283,12 @@ runs headless. `"restored":true` from the third command means the window came ba
 Without `-AutoSelect` the same script opens the real selector and blocks until you confirm
 or press `Esc`; a cancel answers `{"ok":false,"reason":"cancelled"}`.
 
-macOS runs the other half of the same script:
+macOS is a separate package with the same answer contract:
 
 ```bash
+cd packages/macos
+node --check index.js
+node --check client.js
 bash scripts/snip-mac.sh --out /tmp/shot.png --region '200,150,800,500' --hide 0
 bash scripts/snip-mac.sh --restore-only --record /tmp/shot2.parked
 ```
@@ -267,11 +307,13 @@ Recording — without it `screencapture` still writes a file, it is just a pictu
 | Window stays hidden | The driver was killed mid-capture. Run `scripts\snip.ps1 -RestoreOnly -Record <the .parked file>` (on macOS `bash scripts/snip-mac.sh --restore-only --record <same file>`), or click DSH on the taskbar / Dock. |
 | Capture shows the picker panel | The mode picker had not finished closing. Reload the page; the client polls for the sheet (1.5 s cap) before firing. |
 | Selector is smaller than the screen | The machine reports a scaled virtual screen and the process is not DPI-aware. `DshShot.cs` calls `SetProcessDpiAwarenessContext` before measuring; if a wrapper strips it, run the script with `-STA` as above. |
+| `this build only runs on macOS` in the console | The wrong package is installed for this machine. Swap `dsh-screenshot` for `dsh-screenshot-mac` (or back) in the profile. |
 | Nothing happens on Linux | Expected — the plugin has Windows and macOS paths only. |
 
 ## Platform and known limits
 
-- Windows 10/11 and macOS; no Linux path.
+- Windows 10/11 and macOS, as two separate packages; no Linux path. Installing the Windows
+  package on macOS (or the reverse) logs one warning instead of pretending to work.
 - **macOS uses the system selector.** The crosshair, the magnifier, the live pixel readout,
   space-to-grab-a-window and Esc are all `screencapture`'s; moving the frame, resizing by its
   handles and `Ctrl`-to-mark are this plugin's own work on Windows and have no macOS

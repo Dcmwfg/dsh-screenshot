@@ -1,0 +1,62 @@
+{
+  "name": "dsh-screenshot-mac",
+  "version": "0.5.1",
+  "private": true,
+  "type": "module",
+  "description": "Region screenshot for the DeepSeek Harness composer on macOS: the hosting app steps aside, the system's own screencapture selector frames the region, and the finished PNG lands in the composer as a pending attachment.",
+  "license": "MIT",
+  "icon": "./icon.svg",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "screenshot",
+    "capture",
+    "macos"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "scripts/*",
+    "locale/*.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-commands"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dcmwfg/dsh-screenshot.git",
+    "directory": "packages/macos"
+  },
+  "homepage": "https://github.com/Dcmwfg/dsh-screenshot#readme",
+  "bugs": {
+    "url": "https://github.com/Dcmwfg/dsh-screenshot/issues"
+  }
+}

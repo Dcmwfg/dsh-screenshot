@@ -1,18 +1,18 @@
 /**
- * Host half of the screenshot bundle.
+ * Host half of the macOS build.
  *
- * One route: ask the native driver to park this window, draw a full-screen
- * selection form over the whole virtual desktop, let the user frame and annotate
- * a region, crop it to PNG, and put the window back. The client only forwards
- * the finished image to the composer.
+ * One route: ask the native driver to step the frontmost app aside, open the
+ * system's own screen selector, take the PNG it wrote, and put the app back.
+ * The client only forwards the finished image to the composer.
  *
- * The selection deliberately lives in a native top-level form rather than in the
- * page: a DOM overlay can never leave the renderer's viewport, so it can only
- * offer a scaled-down picker inside the app window. A WinForms form sized to
- * SystemInformation.VirtualScreen covers every monitor 1:1.
+ * Why the system selector and not one of our own: macOS already ships a better
+ * region picker than anything worth rebuilding - the crosshair, the magnifier,
+ * the live pixel readout, space to grab a whole window, Esc to cancel. So the
+ * driver spends its own code on the half macOS does not do for you: getting the
+ * window that hosts this page out of the way, and putting it back.
  *
  * Everything here runs in the DSH host process, never in the tool sandbox:
- * cross-process window control is refused inside that sandbox.
+ * cross-application window control is refused inside that sandbox.
  */
 import { spawn } from 'node:child_process'
 import { readFile, rm } from 'node:fs/promises'
@@ -26,30 +26,18 @@ const IS_MAC = process.platform === 'darwin'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const SCRIPTS = join(ROOT, 'scripts')
-/** One driver per platform: the same job lives in different places on each. */
-const DRIVER = join(SCRIPTS, IS_MAC ? 'snip-mac.sh' : 'snip.ps1')
-
-const SHOT_ROUTE = '/dsh-shot/shot'
-const PING_ROUTE = '/dsh-shot/ping'
+const DRIVER = join(SCRIPTS, 'snip-mac.sh')
 
 /**
- * Windows runs the driver under PowerShell 5.1, the one shipped on every
- * supported version (and the one that can compile DshShot.cs in-process).
- * macOS runs it under the system bash.
+ * Route prefix, module id and bundle id all carry the platform, because this
+ * is a separate package from the Windows build and the two must never claim the
+ * same path if somebody installs both by accident.
  */
-const SHELL = IS_MAC
-  ? '/bin/bash'
-  : (() => {
-      const root = process.env.SystemRoot
-      return root === undefined || root === ''
-        ? 'powershell.exe'
-        : join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    })()
+const SHOT_ROUTE = '/dsh-shot-mac/shot'
+const PING_ROUTE = '/dsh-shot-mac/ping'
 
-/** What the shell needs in front of the driver path; macOS needs nothing. */
-const SHELL_FLAGS = IS_MAC
-  ? []
-  : ['-NoProfile', '-NonInteractive', '-STA', '-ExecutionPolicy', 'Bypass']
+/** The bash that ships with macOS. */
+const SHELL = '/bin/bash'
 
 /** How long the user may spend on the selector before the driver gives up. */
 const CAPTURE_BUDGET_SECONDS = 180
@@ -92,7 +80,7 @@ async function collectBody(req) {
 
 /**
  * The driver prints exactly one JSON line as its answer; earlier lines can be
- * Add-Type chatter, so scan backwards for the last parseable object.
+ * osascript chatter, so scan backwards for the last parseable object.
  */
 function answerLine(stdout) {
   const rows = stdout.split(/\r?\n/)
@@ -109,46 +97,26 @@ function answerLine(stdout) {
 }
 
 /**
- * The argv that asks this platform's driver for one capture.
- *
- * The two drivers do different things inside, but the host half asks for the
- * same thing on both: a PNG at this path, this window out of the way or not,
- * and one JSON line back. Exported so the mapping can be checked without a host.
+ * The argv that asks the driver for one capture.
+ * Exported so the mapping can be checked without a host.
  */
 export function driverArgs(options) {
-  const recordFile = options.recordFile
   if (options.restoreOnly === true) {
-    return IS_MAC
-      ? [DRIVER, '--restore-only', '--record', recordFile]
-      : ['-File', DRIVER, '-RestoreOnly', '-Record', recordFile]
-  }
-  // Only a browser is minimized; every shell is hidden. Which one this is comes
-  // from the caller, because a page on http cannot tell what is showing it.
-  const hideKind = options.hostKind === 'browser' ? 'minimize' : 'hide'
-  if (IS_MAC) {
-    const args = [
-      DRIVER,
-      '--out', options.outPath,
-      '--record', recordFile,
-      '--timeout', String(CAPTURE_BUDGET_SECONDS),
-      '--hide', options.hideWindow ? '1' : '0',
-      '--target-kind', options.hostKind,
-      '--hide-kind', hideKind,
-    ]
-    if (options.title !== '') args.push('--title', options.title)
-    return args
+    return [DRIVER, '--restore-only', '--record', options.recordFile]
   }
   const args = [
-    '-File', DRIVER,
-    '-OutPath', options.outPath,
-    '-Record', recordFile,
-    '-TimeoutSeconds', String(CAPTURE_BUDGET_SECONDS),
-    '-HideWindow', options.hideWindow ? '1' : '0',
-    '-TargetKind', options.hostKind,
-    '-HideKind', hideKind,
-    '-SourceDir', SCRIPTS,
+    DRIVER,
+    '--out', options.outPath,
+    '--record', options.recordFile,
+    '--timeout', String(CAPTURE_BUDGET_SECONDS),
+    '--hide', options.hideWindow ? '1' : '0',
+    // The driver decides how each app steps aside from what it is - a browser
+    // is minimized, anything else is hidden - so the two kinds are passed
+    // through for the record and not branched on here.
+    '--target-kind', options.hostKind,
+    '--hide-kind', options.hostKind === 'browser' ? 'minimize' : 'hide',
   ]
-  if (options.title !== '') args.push('-TitleFragment', options.title)
+  if (options.title !== '') args.push('--title', options.title)
   return args
 }
 
@@ -164,11 +132,10 @@ function runDriver(args, budgetMs) {
     let expired = false
     let child
     try {
-      child = spawn(SHELL, [...SHELL_FLAGS, ...args], {
-        windowsHide: true,
-        // The macOS driver is killed as a group so the selector it started goes
-        // with it; killing bash alone would leave a crosshair on screen.
-        detached: IS_MAC,
+      child = spawn(SHELL, args, {
+        // A process group, so the timeout can take the selector down with the
+        // script instead of leaving a crosshair on screen.
+        detached: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } catch (error) {
@@ -177,7 +144,7 @@ function runDriver(args, budgetMs) {
     }
     const alarm = setTimeout(() => {
       expired = true
-      if (IS_MAC && typeof child.pid === 'number') {
+      if (typeof child.pid === 'number') {
         try {
           process.kill(-child.pid, 'SIGTERM')
           return
@@ -208,8 +175,8 @@ function runDriver(args, budgetMs) {
 }
 
 /**
- * Last resort: pull a parked window back when the driver died before its own
- * finally block could. Answers true when the window is known to be back.
+ * Last resort: put the app back when the driver died before its own trap could.
+ * Answers true when the app is known to be back.
  */
 async function unpark(record) {
   if (record === undefined || record === '') return false
@@ -222,6 +189,12 @@ async function unpark(record) {
 }
 
 export function apply(ctx) {
+  if (!IS_MAC) {
+    // This is the macOS package. Saying it once beats a silent capture that
+    // spawns a bash path Windows does not have.
+    console.warn('[dsh-screenshot-mac] this build only runs on macOS; install dsh-screenshot on Windows')
+  }
+
   const refuse = (req, res) => {
     const status = ctx.connection.requestRejection(req)
     if (status === undefined) return false
@@ -239,10 +212,10 @@ export function apply(ctx) {
         path: PING_ROUTE,
         handler: (req, res) => {
           if (refuse(req, res)) return
-          reply(res, 200, { ok: true, driver: DRIVER, shell: SHELL })
+          reply(res, 200, { ok: true, platform: process.platform, driver: DRIVER, shell: SHELL })
         },
       }),
-    'screenshot.ping',
+    'screenshot.mac.ping',
   )
 
   ctx.effect(
@@ -252,6 +225,10 @@ export function apply(ctx) {
         path: SHOT_ROUTE,
         handler: async (req, res) => {
           if (refuse(req, res)) return
+          if (!IS_MAC) {
+            reply(res, 200, { ok: false, reason: 'failed', message: 'this build only runs on macOS' })
+            return
+          }
           if (req.method !== 'POST') {
             res.statusCode = 405
             res.setHeader('allow', 'POST')
@@ -273,28 +250,15 @@ export function apply(ctx) {
           }
 
           const tag = Math.random().toString(36).slice(2, 10) + Date.now().toString(36)
-          const pngFile = join(tmpdir(), '$dsh-shot-' + tag + '.png')
-          const recordFile = join(tmpdir(), '$dsh-shot-' + tag + '.parked')
+          const pngFile = join(tmpdir(), 'dsh-shot-mac-' + tag + '.png')
+          const recordFile = join(tmpdir(), 'dsh-shot-mac-' + tag + '.parked')
           const title = typeof body.title === 'string' ? body.title.slice(0, TITLE_LIMIT_CHARS) : ''
           const park = body.hide !== false
-          // Who may step aside, and how, depends on what is showing the page:
-          //   title    - a shell that serves the page under dsh-app://, where the
-          //              caption names the window outright; hide it, exactly as
-          //              the desktop build always has.
-          //   shell    - a launcher that hosts the page in its own native window
-          //              (DSH-X's Tauri window); its caption is the shell's own,
-          //              so it is identified by its webview child instead, and it
-          //              is hidden the same way - one code path for every shell.
-          //   browser  - a real browser tab; only a known browser process is ever
-          //              touched and minimizing keeps a taskbar button to come
-          //              back to.
-          //   auto     - let the driver decide from the window itself: a shell
-          //              that owns the window is hidden, a browser tab is
-          //              minimized. This is what the web build sends, because a
-          //              page on http cannot tell which shell (if any) holds it.
+          // The driver only ever asks the window server which app is frontmost;
+          // it cannot read another app's window title, so "browser" is the only
+          // kind worth distinguishing. Anything else is normalised to auto.
           const kind = typeof body.host === 'string' ? body.host.trim().toLowerCase() : ''
-          const hostKind =
-            kind === 'browser' || kind === 'shell' || kind === 'auto' ? kind : 'title'
+          const hostKind = kind === 'browser' ? 'browser' : kind === 'shell' ? 'shell' : 'auto'
 
           try {
             const run = await runDriver(
@@ -308,8 +272,8 @@ export function apply(ctx) {
                 reason: 'failed',
                 restored,
                 message: restored
-                  ? 'the selector timed out; the window was put back'
-                  : 'the selector timed out and the window did not come back',
+                  ? 'the selector timed out; the app was put back'
+                  : 'the selector timed out and the app did not come back',
               })
               return
             }
@@ -343,9 +307,8 @@ export function apply(ctx) {
               width: answer.width,
               height: answer.height,
               hidden: answer.hidden === true,
-              // "hide" for a shell that owns its window, "minimize" for a
-              // browser tab, "" when nothing was touched. The client only needs
-              // it to tell a missed window apart when it asked for one.
+              // "hide" for an app that was hidden, "minimize" for a browser
+              // window, "" when nothing was touched.
               mode: typeof answer.mode === 'string' ? answer.mode : '',
               restored: true,
               bytes: bytes.length,
@@ -359,6 +322,6 @@ export function apply(ctx) {
           }
         },
       }),
-    'screenshot.shot',
+    'screenshot.mac.shot',
   )
 }
