@@ -3,7 +3,7 @@
   "version": "0.5.1",
   "private": true,
   "type": "module",
-  "description": "Region screenshot for the DeepSeek Harness composer: a topmost native selector covers the whole virtual screen, and the finished PNG lands in the composer as a pending attachment.",
+  "description": "Region screenshot for the DeepSeek Harness composer: a native selector (a full-virtual-screen WinForms form on Windows, the system screencapture on macOS) frames the region, and the finished PNG lands in the composer as a pending attachment.",
   "license": "MIT",
   "icon": "./icon.svg",
   "keywords": [
@@ -13,7 +13,8 @@
     "screenshot",
     "capture",
     "annotation",
-    "windows"
+    "windows",
+    "macos"
   ],
   "exports": {
     ".": "./index.js",
@@ -37,7 +38,8 @@
     "node": ">=20"
   },
   "os": [
-    "win32"
+    "win32",
+    "darwin"
   ],
   "dsh": {
     "bundle": {

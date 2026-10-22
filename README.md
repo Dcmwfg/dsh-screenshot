@@ -3,9 +3,12 @@
 **Region screenshot for the DeepSeek Harness composer.**
 
 One row in the composer's `+` menu. Click it, pick a mode, the DSH window steps aside, a
-native selection form covers the whole desktop, you drag a rectangle over the part you
-actually wanted, annotate it, press the green tick — and the PNG lands in the composer as a
+native selector covers the whole desktop, you drag a rectangle over the part you actually
+wanted, annotate it, press the green tick — and the PNG lands in the composer as a
 **pending attachment**, ready to send with your next message.
+
+Windows and macOS both work. The "native selector" is not the same object on the two: on
+Windows it is this plugin's own WinForms form, on macOS it is the system's `screencapture` UI.
 
 English | [中文](README.zh-CN.md)
 
@@ -30,9 +33,13 @@ The chosen mode is remembered in `localStorage` under `dsh-screenshot.mode`.
 
 ## Which window gives way
 
-The selection step is always the same: one native form covers the whole virtual screen, with the
-same grips and annotations. Only "how does the client get out of the way" differs, because three
-kinds of host can be showing this page and they can name their own window very differently:
+Only "how does the client get out of the way" differs, because several kinds of host can be
+showing this page and they can name their own window very differently. **This section is the
+Windows judgement**; macOS is not given other apps' window titles by the system, so it uses the
+one fact it does have — which app the click landed in — and that is covered under
+"Platform and known limits".
+
+On Windows there are three kinds of host:
 
 | Host | How it is recognised | How it gives way |
 | --- | --- | --- |
@@ -105,17 +112,23 @@ Two things follow, and both are deliberate:
 - **One coordinate space.** Pointer positions, the crop and the saved PNG are all in real
   screen pixels, because there is no `object-fit: contain` scaling step to invert.
 
-The handle is also written to a record file before the window is parked, and
-`scripts\snip.ps1 -RestoreOnly` can pull it back if the process was killed outright.
+The handle is also written to a record file before the window is parked, and the driver's
+restore-only mode (`-RestoreOnly` on Windows, `--restore-only` on macOS) can pull it back if
+the process was killed outright.
 
 ## Requirements
 
-- **Windows 10/11.** Parking a window and drawing over the desktop are Win32 calls. There is
-  no macOS or Linux path.
+- **Windows 10/11 or macOS.** Each platform has its own native driver, doing the same job
+  different ways: on Windows a WinForms form covers the whole virtual desktop
+  (`scripts\DshShot.cs` + `scripts\snip.ps1`), on macOS the driver simply opens the system's
+  own `screencapture -i` selector (`scripts\snip-mac.sh`). There is no Linux path.
 - A DSH desktop build whose composer exposes the `commandUi` service and the
   `webServer` + `connection` host services (the shipping desktop profile does).
-- Windows PowerShell 5.1, which ships with Windows. Nothing else to install — the C#
+- Windows: PowerShell 5.1, which ships with Windows. Nothing else to install — the C#
   selector is compiled on demand by `Add-Type`.
+- macOS: the bundled bash, `screencapture` and `osascript`, all of which ship with the OS.
+  Before the first capture, tick DSH under System Settings → Privacy & Security →
+  Screen Recording, or the shutter returns wallpaper only.
 
 ## Install
 
@@ -172,7 +185,7 @@ Nothing is sent until you submit — the screenshot is an attachment, not a mess
 
 | Half | File | Job |
 | --- | --- | --- |
-| Host | `index.js` | `POST /dsh-shot/shot` → spawns PowerShell with `scripts/snip.ps1`, answers one finished PNG as a data URL. `GET /dsh-shot/ping` is a liveness probe. |
+| Host | `index.js` | `POST /dsh-shot/shot` → spawns PowerShell with `scripts/snip.ps1` on Windows, bash with `scripts/snip-mac.sh` on macOS, and answers one finished PNG as a data URL. `GET /dsh-shot/ping` is a liveness probe. |
 | Client | `client.js` | Registers the `shot` command with its two modes, waits for the picker sheet to close, fires the capture, and drops the returned PNG into the composer. |
 | Native | `scripts/snip.ps1` + `scripts/DshShot.cs` | Park the window (optional) → blit the virtual screen → topmost full-screen selector (frame, grips, move, annotate) → crop composite → save PNG → restore. Also restores on demand with `-RestoreOnly`. |
 
@@ -233,24 +246,46 @@ runs headless. `"restored":true` from the third command means the window came ba
 Without `-AutoSelect` the same script opens the real selector and blocks until you confirm
 or press `Esc`; a cancel answers `{"ok":false,"reason":"cancelled"}`.
 
+macOS runs the other half of the same script:
+
+```bash
+bash scripts/snip-mac.sh --out /tmp/shot.png --region '200,150,800,500' --hide 0
+bash scripts/snip-mac.sh --restore-only --record /tmp/shot2.parked
+```
+
+One JSON line, same contract. `--region` skips the system selector (the macOS counterpart of
+`-AutoSelect`), so that run is headless too; without it you get the armed crosshair and `Esc`
+cancels. Before the first run, tick DSH under System Settings → Privacy & Security → Screen
+Recording — without it `screencapture` still writes a file, it is just a picture of wallpaper.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
 | No `+` menu row | The bundle is not composed. Check the `bundles` array and the `node_modules` junction, then restart. |
 | `Screenshot failed` in the console | The driver printed an error. Run the self-test above — it uses the same script and prints the reason. |
-| Window stays hidden | The driver was killed mid-capture. Run `scripts\snip.ps1 -RestoreOnly -Record <the .parked file>`, or click DSH on the taskbar. |
+| Window stays hidden | The driver was killed mid-capture. Run `scripts\snip.ps1 -RestoreOnly -Record <the .parked file>` (on macOS `bash scripts/snip-mac.sh --restore-only --record <same file>`), or click DSH on the taskbar / Dock. |
 | Capture shows the picker panel | The mode picker had not finished closing. Reload the page; the client polls for the sheet (1.5 s cap) before firing. |
 | Selector is smaller than the screen | The machine reports a scaled virtual screen and the process is not DPI-aware. `DshShot.cs` calls `SetProcessDpiAwarenessContext` before measuring; if a wrapper strips it, run the script with `-STA` as above. |
-| Nothing happens on a non-Windows host | Expected — the plugin is Windows-only. |
+| Nothing happens on Linux | Expected — the plugin has Windows and macOS paths only. |
 
 ## Platform and known limits
 
-- Windows 10/11 only.
-- The selector spans the whole virtual screen, so multi-monitor regions work, but monitors
-  with different DPI are flattened onto one coordinate grid.
-- Annotations are rectangles in one colour (red); `Ctrl+Z` undoes the last mark only. Marking
-  costs a modifier because the plain body drag belongs to moving the frame.
+- Windows 10/11 and macOS; no Linux path.
+- **macOS uses the system selector.** The crosshair, the magnifier, the live pixel readout,
+  space-to-grab-a-window and Esc are all `screencapture`'s; moving the frame, resizing by its
+  handles and `Ctrl`-to-mark are this plugin's own work on Windows and have no macOS
+  counterpart. macOS already ships the better version — redrawing it would be a step down.
+- Stepping aside on macOS: a browser is minimized (Chrome-family and Safari support that
+  natively, no Accessibility grant needed), anything else is hidden through
+  `NSRunningApplication`, which needs no grant either; System Events is only the fallback.
+  If the hosting app cannot be identified, nothing is touched and the capture goes ahead
+  with it in frame.
+- The Windows selector spans the whole virtual screen, so multi-monitor regions work, but
+  monitors with different DPI are flattened onto one coordinate grid; on macOS the system
+  handles multi-monitor itself.
+- Annotations (Windows) are rectangles in one colour (red); `Ctrl+Z` undoes the last mark
+  only. Marking costs a modifier because the plain body drag belongs to moving the frame.
 - The frozen frame is a snapshot: anything that changes behind the selector is not reflected.
 - "Keep the window in the shot" captures whatever is on screen, so bring DSH to the front first
   if you want to include DSH itself.

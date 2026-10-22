@@ -2,9 +2,12 @@
 
 **给 DeepSeek Harness 输入框用的区域截图插件。**
 
-输入框 `+` 菜单里多一行。点它、选模式，DSH 窗口先让开，一个原生选区窗体盖住整个桌面，
+输入框 `+` 菜单里多一行。点它、选模式，DSH 窗口先让开，一个原生选区盖住整个桌面，
 你在真屏幕上拖出想要的区域、随手标注，按绿勾 —— PNG 就落进输入框，作为
 **待发送的附件**，跟下一条消息一起发出去。
+
+Windows 与 macOS 都支持。那个「原生选区」在两边不是同一个东西：Windows 是插件自己的
+WinForms 窗体，macOS 直接开系统自带的 `screencapture` 框选。
 
 [English](README.md) | 中文
 
@@ -29,8 +32,11 @@
 
 ## 哪个窗口让开
 
-选区这一步各处一样：都是那个盖住整个虚拟屏的原生窗体，框选、抓手、标注都不少。
-「隐藏窗口截图」时才需要认出「承载这个页面的那个窗口」，能托着页面的宿主有四种：
+「隐藏窗口截图」时才需要认出「承载这个页面的那个窗口」。**这一节讲的是 Windows 的判定**；
+macOS 上认不出标题（系统不给别家的标题），所以它只用「点下去落在哪个前台应用」这一条，
+浏览器最小化、别的应用隐藏 —— 细节见下面「平台与已知边界」。
+
+Windows 侧能托着页面的宿主有三种：
 
 | 宿主 | 怎么认 | 怎么让开 |
 | --- | --- | --- |
@@ -79,14 +85,19 @@
 - **只有一套坐标系。** 指针位置、裁切框、存下来的 PNG 全是真实屏幕像素，
   没有 `object-fit: contain` 的缩放要反算。
 
-句柄在藏窗口之前先写进记录文件，`scripts\snip.ps1 -RestoreOnly` 能在进程被杀之后兜底。
+句柄在藏窗口之前先写进记录文件，驱动的 `-RestoreOnly`（Windows）/ `--restore-only`（macOS）
+能在进程被杀之后兜底。
 
 ## 运行条件
 
-- **Windows 10/11。** 收起窗口和在桌面上画东西都是 Win32 调用，没有 macOS / Linux 路径。
+- **Windows 10/11 或 macOS。** 两边各有一个原生驱动，做的事一样、走的路不同：
+  Windows 用 WinForms 窗体盖住整个虚拟屏（`scripts\DshShot.cs` + `scripts\snip.ps1`），
+  macOS 直接开系统自带的 `screencapture -i` 框选（`scripts\snip-mac.sh`）。Linux 没有路径。
 - 一个把 `commandUi` 服务与 `webServer` + `connection` 宿主服务暴露出来的 DSH 桌面版
   （发行版桌面 profile 就是）。
-- Windows PowerShell 5.1，系统自带。别的都不用装 —— C# 选区窗体由 `Add-Type` 现场编译。
+- Windows：PowerShell 5.1，系统自带。别的都不用装 —— C# 选区窗体由 `Add-Type` 现场编译。
+- macOS：系统自带的 bash、`screencapture`、`osascript`。第一次截图前要在
+  「系统设置 → 隐私与安全性 → 录屏与系统录音」里勾上 DSH，否则截出来只有壁纸。
 
 ## 安装
 
@@ -139,7 +150,7 @@
 
 | 半边 | 文件 | 干什么 |
 | --- | --- | --- |
-| 宿主 | `index.js` | `POST /dsh-shot/shot` → 起 PowerShell 跑 `scripts/snip.ps1`，回一张成品 PNG 的 data URL。`GET /dsh-shot/ping` 是存活探针。 |
+| 宿主 | `index.js` | `POST /dsh-shot/shot` → 按平台起 PowerShell 跑 `scripts/snip.ps1`、或起 bash 跑 `scripts/snip-mac.sh`，回一张成品 PNG 的 data URL。`GET /dsh-shot/ping` 是存活探针。 |
 | 客户端 | `client.js` | 注册 `shot` 命令与两种模式，等选择面板消失，发请求，把回来的 PNG 放进输入框。 |
 | 原生 | `scripts/snip.ps1` + `scripts/DshShot.cs` | 藏窗口（可选）→ 拷贝虚拟屏 → 置顶全屏选区（框选、抓手、平移、标注）→ 合成裁切 → 存 PNG → 恢复。也能用 `-RestoreOnly` 按需恢复。 |
 
@@ -196,24 +207,43 @@ powershell.exe -NoProfile -NonInteractive -STA -ExecutionPolicy Bypass `
 不带 `-AutoSelect` 就是真的弹出选区，阻塞到你确认或按 `Esc`；取消会回
 `{"ok":false,"reason":"cancelled"}`。
 
+macOS 走同一个脚本的另一半：
+
+```bash
+bash scripts/snip-mac.sh --out /tmp/shot.png --region '200,150,800,500' --hide 0
+bash scripts/snip-mac.sh --restore-only --record /tmp/shot2.parked
+```
+
+同样是一行 JSON。带上 `--region` 就不弹系统选区（等价于 Windows 的 `-AutoSelect`），
+所以这一条也能无人值守跑；不带就开系统的准星框选，`Esc` 取消。第一次跑之前记得在
+「系统设置 → 隐私与安全性 → 录屏与系统录音」里勾上 DSH —— 没勾的话 `screencapture`
+一样会写出文件，只是写出来的是一张壁纸。
+
 ## 出问题看这里
 
 | 现象 | 原因 / 修法 |
 | --- | --- |
 | `+` 菜单里没有那一行 | bundle 没被组合。查 `bundles` 数组和 `node_modules` 的 junction，然后重启。 |
 | 控制台里 `Screenshot failed` | 驱动报了错。跑上面的自检 —— 同一个脚本，会打印原因。 |
-| 窗口一直藏着不出来 | 驱动被杀在半路。跑 `scripts\snip.ps1 -RestoreOnly -Record <那个 .parked 文件>`，或点任务栏里的 DSH。 |
+| 窗口一直藏着不出来 | 驱动被杀在半路。跑 `scripts\snip.ps1 -RestoreOnly -Record <那个 .parked 文件>`（macOS 是 `bash scripts/snip-mac.sh --restore-only --record <同一文件>`），或点任务栏 / Dock 里的 DSH。 |
 | 截图里带上了选项面板 | 面板还没关完。刷新页面；客户端会先轮询等面板（上限 1.5 s）再拍。 |
 | 选区比屏幕小一圈 | 机器报的是缩放后的虚拟屏，进程不是 DPI 感知的。`DshShot.cs` 在量尺寸之前会调 `SetProcessDpiAwarenessContext`；如果被外层剥掉了，照上面带 `-STA` 跑。 |
-| 非 Windows 上没反应 | 正常，插件只支持 Windows。 |
+| Linux 上没反应 | 正常，插件只有 Windows 和 macOS 两条路径。 |
 
 ## 平台与已知边界
 
-- 只支持 Windows 10/11。
-- 选区横跨整个虚拟屏，所以跨显示器能用，但不同 DPI 的显示器会被拉平到同一套坐标上。
+- Windows 10/11 与 macOS；Linux 没有路径。
+- **macOS 用的是系统那套框选。** 准星、放大镜、逐像素尺寸读数、空格切整窗、Esc 取消都是
+  `screencapture` 自带的；移动选区、拖手柄调整大小、`Ctrl` 标注这些是本插件在 Windows 上
+  另做的，macOS 侧没有对应物 —— macOS 已经有了更好的，重画一个是退步。
+- macOS 让路：浏览器走「最小化窗口」（Chrome 系与 Safari 原生支持，不需要辅助功能授权），
+  别的应用走「隐藏应用」（`NSRunningApplication`，同样不吃授权，System Events 只作兜底）。
+  认不出承载页面的应用就一个都不动，照常截图，只是画面里带着它。
+- 选区（Windows）横跨整个虚拟屏，所以跨显示器能用，但不同 DPI 的显示器会被拉平到同一套坐标上；
+  macOS 的跨屏选区由系统处理。
 - 标注只有一种颜色（红）的矩形；`Ctrl+Z` 只撤最后一笔。标注要按住 `Ctrl` 才能画，因为不按
-  `Ctrl` 的框内拖拽留给了移动选区。
-- 冻结帧是快照：选区开着的时候，后面别处变了不会反映。
+  `Ctrl` 的框内拖拽留给了移动选区。（Windows）
+- 冻结帧是快照：选区开着的时候，后面别处变了不会反映。（Windows）
 - 「保留窗口截图」截的是当前屏幕上的一切，所以想截 DSH 自己得先把它切到前台。
 
 ## 许可

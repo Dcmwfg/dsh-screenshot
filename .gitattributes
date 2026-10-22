@@ -2,6 +2,9 @@
 # expects, so Add-Type and the PowerShell parser never see a mixed file.
 *.ps1  text eol=crlf
 *.cs   text eol=crlf
+# The macOS driver is run by /bin/bash, which treats a stray CR as part of the
+# token and fails on a shebang it cannot read.
+*.sh   text eol=lf
 *.md   text eol=lf
 *.js   text eol=lf
 *.json text eol=lf
